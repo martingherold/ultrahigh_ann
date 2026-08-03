@@ -1,0 +1,47 @@
+cff-version: 1.2.0
+message: >-
+  If you use this software, please cite the associated SoCG 2025 paper using
+  the metadata in preferred-citation.
+title: "Ultra-High-Dimensional Nearest-Representative Search"
+type: software
+version: "0.1.0"
+authors:
+  - family-names: Herold
+    given-names: "Martin G."
+license: GPL-3.0-only
+abstract: >-
+  An experimental C++ implementation and benchmarking framework for
+  nearest-representative search with sublinear coordinate acquisition in
+  ultra-high-dimensional spaces. It includes exact, flat sampled,
+  hierarchical sampled, and uniform-sampling methods for the l1 and l2 norms.
+keywords:
+  - approximate nearest neighbor
+  - coordinate sampling
+  - nearest-representative search
+  - ultra-high-dimensional data
+preferred-citation:
+  type: conference-paper
+  title: "Sublinear Data Structures for Nearest Neighbor in Ultra High Dimensions"
+  authors:
+    - family-names: Herold
+      given-names: "Martin G."
+    - family-names: Nanongkai
+      given-names: Danupon
+    - family-names: Spoerhase
+      given-names: Joachim
+    - family-names: Varma
+      given-names: Nithin
+    - family-names: Wu
+      given-names: Zihang
+  collection-title: "41st International Symposium on Computational Geometry (SoCG 2025)"
+  collection-type: proceedings
+  conference:
+    name: "41st International Symposium on Computational Geometry (SoCG 2025)"
+  year: 2025
+  volume: 332
+  start: "56:1"
+  end: "56:15"
+  doi: "10.4230/LIPIcs.SoCG.2025.56"
+  url: "https://drops.dagstuhl.de/entities/document/10.4230/LIPIcs.SoCG.2025.56"
+  publisher:
+    name: "Schloss Dagstuhl - Leibniz-Zentrum für Informatik"

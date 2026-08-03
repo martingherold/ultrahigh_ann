@@ -1,0 +1,22 @@
+# CMake and build outputs
+/build/
+/cmake-build-*/
+CMakeUserPresets.json
+compile_commands.json
+
+# Generated experiment outputs
+/results/raw/*
+!/results/raw/.gitkeep
+/results/plots/*
+!/results/plots/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Editors and operating systems
+.idea/
+.vscode/
+*.swp
+.DS_Store

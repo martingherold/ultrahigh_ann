@@ -1,0 +1,21 @@
+# Raw downloads
+/raw/tcga/*
+!/raw/tcga/.gitkeep
+/raw/tcga_pancancer/*
+!/raw/tcga_pancancer/.gitkeep
+/raw/isolet/*
+!/raw/isolet/.gitkeep
+/raw/stl10/*
+!/raw/stl10/.gitkeep
+/raw/20newsgroups/*
+!/raw/20newsgroups/.gitkeep
+/raw/coil100/*
+!/raw/coil100/.gitkeep
+
+# Derived and generated data
+/processed/*
+!/processed/.gitkeep
+/synthetic/*
+!/synthetic/.gitkeep
+
+# Split definitions in splits/ remain version-controlled.

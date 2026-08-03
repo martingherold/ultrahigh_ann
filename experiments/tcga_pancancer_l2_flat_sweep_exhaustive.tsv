@@ -1,0 +1,43 @@
+# Paths are resolved relative to this setup file.
+# Exact L2 search is implicit and runs once before all approximate configurations.
+ultrahigh_ann_benchmark_setup_v1
+dataset	../data/processed/tcga_pancancer_v1
+output	../results/raw/tcga_pancancer_l2_flat_sweep_exhaustive.json
+distance	l2
+max_queries	0
+
+run	flat_t32_seed7	flat	repetitions=32	seed=7
+run	flat_t32_seed20	flat	repetitions=32	seed=20
+run	flat_t32_seed42	flat	repetitions=32	seed=42
+run	flat_t32_seed1312	flat	repetitions=32	seed=1312
+run	flat_t32_seed2026	flat	repetitions=32	seed=2026
+
+run	flat_t64_seed7	flat	repetitions=64	seed=7
+run	flat_t64_seed20	flat	repetitions=64	seed=20
+run	flat_t64_seed42	flat	repetitions=64	seed=42
+run	flat_t64_seed1312	flat	repetitions=64	seed=1312
+run	flat_t64_seed2026	flat	repetitions=64	seed=2026
+
+run	flat_t128_seed7	flat	repetitions=128	seed=7
+run	flat_t128_seed20	flat	repetitions=128	seed=20
+run	flat_t128_seed42	flat	repetitions=128	seed=42
+run	flat_t128_seed1312	flat	repetitions=128	seed=1312
+run	flat_t128_seed2026	flat	repetitions=128	seed=2026
+
+run	flat_t256_seed7	flat	repetitions=256	seed=7
+run	flat_t256_seed20	flat	repetitions=256	seed=20
+run	flat_t256_seed42	flat	repetitions=256	seed=42
+run	flat_t256_seed1312	flat	repetitions=256	seed=1312
+run	flat_t256_seed2026	flat	repetitions=256	seed=2026
+
+run	flat_t512_seed7	flat	repetitions=512	seed=7
+run	flat_t512_seed20	flat	repetitions=512	seed=20
+run	flat_t512_seed42	flat	repetitions=512	seed=42
+run	flat_t512_seed1312	flat	repetitions=512	seed=1312
+run	flat_t512_seed2026	flat	repetitions=512	seed=2026
+
+run	flat_t1024_seed7	flat	repetitions=1024	seed=7
+run	flat_t1024_seed20	flat	repetitions=1024	seed=20
+run	flat_t1024_seed42	flat	repetitions=1024	seed=42
+run	flat_t1024_seed1312	flat	repetitions=1024	seed=1312
+run	flat_t1024_seed2026	flat	repetitions=1024	seed=2026

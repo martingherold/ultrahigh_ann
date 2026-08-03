@@ -1,0 +1,67 @@
+# Deterministic smoke benchmark for the recruiter-facing quickstart.
+# This illustrates the accuracy-coordinate trade-off; it is not publication evidence.
+ultrahigh_ann_benchmark_setup_v1
+dataset	../data/synthetic/quickstart_v1
+output	../results/raw/synthetic_quickstart_l2.json
+distance	l2
+max_queries	0
+
+run	flat_t1_seed7	flat	repetitions=1	seed=7
+run	uniform_t1_seed7	uniform	repetitions=1	seed=7
+run	flat_t2_seed7	flat	repetitions=2	seed=7
+run	uniform_t2_seed7	uniform	repetitions=2	seed=7
+run	flat_t4_seed7	flat	repetitions=4	seed=7
+run	uniform_t4_seed7	uniform	repetitions=4	seed=7
+run	flat_t8_seed7	flat	repetitions=8	seed=7
+run	uniform_t8_seed7	uniform	repetitions=8	seed=7
+run	flat_t16_seed7	flat	repetitions=16	seed=7
+run	uniform_t16_seed7	uniform	repetitions=16	seed=7
+run	flat_t32_seed7	flat	repetitions=32	seed=7
+run	uniform_t32_seed7	uniform	repetitions=32	seed=7
+run	hierarchical_t4_p8_seed7	hierarchical	repetitions=4	seed=7	projection_dimension=8
+run	hierarchical_t4_p16_seed7	hierarchical	repetitions=4	seed=7	projection_dimension=16
+run	hierarchical_t8_p8_seed7	hierarchical	repetitions=8	seed=7	projection_dimension=8
+run	hierarchical_t8_p16_seed7	hierarchical	repetitions=8	seed=7	projection_dimension=16
+run	hierarchical_t8_p32_seed7	hierarchical	repetitions=8	seed=7	projection_dimension=32
+run	hierarchical_t16_p16_seed7	hierarchical	repetitions=16	seed=7	projection_dimension=16
+run	hierarchical_t16_p32_seed7	hierarchical	repetitions=16	seed=7	projection_dimension=32
+
+run	flat_t1_seed42	flat	repetitions=1	seed=42
+run	uniform_t1_seed42	uniform	repetitions=1	seed=42
+run	flat_t2_seed42	flat	repetitions=2	seed=42
+run	uniform_t2_seed42	uniform	repetitions=2	seed=42
+run	flat_t4_seed42	flat	repetitions=4	seed=42
+run	uniform_t4_seed42	uniform	repetitions=4	seed=42
+run	flat_t8_seed42	flat	repetitions=8	seed=42
+run	uniform_t8_seed42	uniform	repetitions=8	seed=42
+run	flat_t16_seed42	flat	repetitions=16	seed=42
+run	uniform_t16_seed42	uniform	repetitions=16	seed=42
+run	flat_t32_seed42	flat	repetitions=32	seed=42
+run	uniform_t32_seed42	uniform	repetitions=32	seed=42
+run	hierarchical_t4_p8_seed42	hierarchical	repetitions=4	seed=42	projection_dimension=8
+run	hierarchical_t4_p16_seed42	hierarchical	repetitions=4	seed=42	projection_dimension=16
+run	hierarchical_t8_p8_seed42	hierarchical	repetitions=8	seed=42	projection_dimension=8
+run	hierarchical_t8_p16_seed42	hierarchical	repetitions=8	seed=42	projection_dimension=16
+run	hierarchical_t8_p32_seed42	hierarchical	repetitions=8	seed=42	projection_dimension=32
+run	hierarchical_t16_p16_seed42	hierarchical	repetitions=16	seed=42	projection_dimension=16
+run	hierarchical_t16_p32_seed42	hierarchical	repetitions=16	seed=42	projection_dimension=32
+
+run	flat_t1_seed2026	flat	repetitions=1	seed=2026
+run	uniform_t1_seed2026	uniform	repetitions=1	seed=2026
+run	flat_t2_seed2026	flat	repetitions=2	seed=2026
+run	uniform_t2_seed2026	uniform	repetitions=2	seed=2026
+run	flat_t4_seed2026	flat	repetitions=4	seed=2026
+run	uniform_t4_seed2026	uniform	repetitions=4	seed=2026
+run	flat_t8_seed2026	flat	repetitions=8	seed=2026
+run	uniform_t8_seed2026	uniform	repetitions=8	seed=2026
+run	flat_t16_seed2026	flat	repetitions=16	seed=2026
+run	uniform_t16_seed2026	uniform	repetitions=16	seed=2026
+run	flat_t32_seed2026	flat	repetitions=32	seed=2026
+run	uniform_t32_seed2026	uniform	repetitions=32	seed=2026
+run	hierarchical_t4_p8_seed2026	hierarchical	repetitions=4	seed=2026	projection_dimension=8
+run	hierarchical_t4_p16_seed2026	hierarchical	repetitions=4	seed=2026	projection_dimension=16
+run	hierarchical_t8_p8_seed2026	hierarchical	repetitions=8	seed=2026	projection_dimension=8
+run	hierarchical_t8_p16_seed2026	hierarchical	repetitions=8	seed=2026	projection_dimension=16
+run	hierarchical_t8_p32_seed2026	hierarchical	repetitions=8	seed=2026	projection_dimension=32
+run	hierarchical_t16_p16_seed2026	hierarchical	repetitions=16	seed=2026	projection_dimension=16
+run	hierarchical_t16_p32_seed2026	hierarchical	repetitions=16	seed=2026	projection_dimension=32
