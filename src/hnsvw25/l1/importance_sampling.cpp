@@ -38,7 +38,6 @@ std::vector<double> compute_l1_sampling_probabilities(
             }
             const double inverse_dist = 1.0 / dist;
             for(std::size_t d=0;d<cols;++d){
-                //Check later if removing the static_cast improves performance.
                 const double probability = std::abs(static_cast<double>(row1[d])-static_cast<double>(row2[d])) * inverse_dist;
 
                 if(probability > probabilities[d]){

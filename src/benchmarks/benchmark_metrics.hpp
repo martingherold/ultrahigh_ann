@@ -20,20 +20,20 @@ inline constexpr std::array<double, 4> approximation_epsilons{
 
 struct DistributionSummary {
     std::size_t count{};
-    std::optional<double> mean;
-    std::optional<double> median;
-    std::optional<double> percentile_95;
-    std::optional<double> percentile_99;
-    std::optional<double> maximum;
+    std::optional<double> mean{};
+    std::optional<double> median{};
+    std::optional<double> percentile_95{};
+    std::optional<double> percentile_99{};
+    std::optional<double> maximum{};
 };
 
 struct MarginBucketMetrics {
     double lower_inclusive{};
-    std::optional<double> upper_exclusive;
+    std::optional<double> upper_exclusive{};
     std::size_t query_count{};
     std::size_t non_optimal_count{};
     std::size_t ratio_eligible_count{};
-    std::optional<double> mean_distance_ratio;
+    std::optional<double> mean_distance_ratio{};
 };
 
 struct ApproximationFailureMetrics {
@@ -49,8 +49,8 @@ struct ApproximationMetrics {
     std::size_t zero_optimum_query_count{};
     std::size_t zero_optimum_non_optimal_count{};
     std::size_t conditional_non_optimal_ratio_count{};
-    std::optional<double> conditional_mean_distance_ratio;
-    std::optional<double> conditional_mean_relative_excess;
+    std::optional<double> conditional_mean_distance_ratio{};
+    std::optional<double> conditional_mean_relative_excess{};
     std::array<ApproximationFailureMetrics, approximation_epsilons.size()>
         approximation_failures;
     DistributionSummary returned_representative_rank;

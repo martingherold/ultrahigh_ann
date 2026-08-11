@@ -43,6 +43,13 @@ more distinct coordinates.
 The underlying measurements are available in the
 [machine-readable uniform-versus-flat report](assets/tcga_pancancer_l2_uniform_vs_flat.json).
 
+### System Specifications
+
+These results were produced on a notebook with an Intel Core i7-9750H CPU
+(6 cores, 12 threads, 2.60 GHz base frequency) and 32 GB of RAM, running
+Debian GNU/Linux 12 (bookworm) on x86-64. The benchmark was compiled in
+Release mode with GCC 12.2.0 and CMake 3.29.3 and executed single-threaded.
+
 ## Reproducibility
 
 Follow the commands below to build the project, prepare the data, run the
@@ -64,6 +71,16 @@ literature/    Supporting papers
 ```
 
 ## Build
+
+Prerequisites:
+
+- CMake 3.20 or newer.
+- A C++ compiler with support for the C++23 features used by the project
+  (tested with GCC 12.2 and Clang 14).
+- Python 3 with `pip` for dataset preparation, experiment orchestration, and
+  figure generation.
+- NumPy 1.23 or newer and Matplotlib 3.6 or newer for the Python tooling; these
+  can be installed from `requirements-figures.txt`.
 
 Configure, build, and test it with:
 

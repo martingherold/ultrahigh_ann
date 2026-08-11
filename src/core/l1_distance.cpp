@@ -19,10 +19,10 @@ namespace ultrahigh_ann::detail
     second.begin(),
     0.0,
     std::plus<>{},
-    [](float first, float second) {
+    [](float firstD, float secondD) {
         return std::abs(
-            static_cast<double>(first) -
-            static_cast<double>(second));
+            static_cast<double>(firstD) -
+            static_cast<double>(secondD));
     });
 
 }

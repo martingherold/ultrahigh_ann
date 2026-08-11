@@ -7,6 +7,21 @@ project(
     LANGUAGES CXX
 )
 
+include(GNUInstallDirs)
+
+if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
+    set(ULTRAHIGH_ANN_BUILD_BENCHMARKS_DEFAULT ON)
+else()
+    set(ULTRAHIGH_ANN_BUILD_BENCHMARKS_DEFAULT OFF)
+endif()
+
+option(
+    ULTRAHIGH_ANN_BUILD_BENCHMARKS
+    "Build the nearest-representative benchmark executable"
+    "${ULTRAHIGH_ANN_BUILD_BENCHMARKS_DEFAULT}"
+)
+unset(ULTRAHIGH_ANN_BUILD_BENCHMARKS_DEFAULT)
+
 add_library(
     ultrahigh_ann
     src/datasets/representative_query_dataset.cpp
@@ -30,26 +45,81 @@ add_library(
 )
 add_library(ultrahigh_ann::ultrahigh_ann ALIAS ultrahigh_ann)
 
-add_executable(
-    nearest_representative_benchmark
-    src/benchmarks/benchmark_metrics.cpp
-    src/benchmarks/benchmark_setup.cpp
-    src/benchmarks/nearest_representative_benchmark.cpp
-)
+if(ULTRAHIGH_ANN_BUILD_BENCHMARKS)
+    add_executable(
+        nearest_representative_benchmark
+        src/benchmarks/benchmark_metrics.cpp
+        src/benchmarks/benchmark_setup.cpp
+        src/benchmarks/nearest_representative_benchmark.cpp
+    )
 
-target_link_libraries(
-    nearest_representative_benchmark
-    PRIVATE
-        ultrahigh_ann
-)
+    target_link_libraries(
+        nearest_representative_benchmark
+        PRIVATE
+            ultrahigh_ann
+    )
+endif()
 
 target_compile_features(ultrahigh_ann PUBLIC cxx_std_23)
 target_include_directories(
     ultrahigh_ann
     PUBLIC
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+        "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
     PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+
+include(CMakePackageConfigHelpers)
+
+set(
+    ULTRAHIGH_ANN_INSTALL_CMAKEDIR
+    "${CMAKE_INSTALL_LIBDIR}/cmake/ultrahigh_ann"
+    CACHE STRING
+    "Directory in which to install the ultrahigh_ann CMake package"
+)
+
+configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ultrahigh_annConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/ultrahigh_annConfig.cmake"
+    INSTALL_DESTINATION "${ULTRAHIGH_ANN_INSTALL_CMAKEDIR}"
+)
+
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/ultrahigh_annConfigVersion.cmake"
+    VERSION "${PROJECT_VERSION}"
+    COMPATIBILITY SameMinorVersion
+)
+
+install(
+    TARGETS ultrahigh_ann
+    EXPORT ultrahigh_annTargets
+    ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+    LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+    RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+    INCLUDES DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+)
+
+install(
+    DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/"
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+    FILES_MATCHING
+        PATTERN "*.h"
+        PATTERN "*.hpp"
+)
+
+install(
+    EXPORT ultrahigh_annTargets
+    FILE ultrahigh_annTargets.cmake
+    NAMESPACE ultrahigh_ann::
+    DESTINATION "${ULTRAHIGH_ANN_INSTALL_CMAKEDIR}"
+)
+
+install(
+    FILES
+        "${CMAKE_CURRENT_BINARY_DIR}/ultrahigh_annConfig.cmake"
+        "${CMAKE_CURRENT_BINARY_DIR}/ultrahigh_annConfigVersion.cmake"
+    DESTINATION "${ULTRAHIGH_ANN_INSTALL_CMAKEDIR}"
 )
 
 include(CTest)
