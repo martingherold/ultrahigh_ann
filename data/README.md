@@ -6,11 +6,11 @@ are intentionally excluded from Git.
 ```text
 raw/          Original, unmodified dataset downloads
 processed/    Normalized or converted datasets
-splits/       Version-controlled train/test split definitions
+splits/       Guidance for reproducible train/test split definitions
 synthetic/    Generated benchmark instances
 ```
 
-Keep dataset download and preparation code in `scripts/`. Record the source
+Keep dataset download and preparation code in `scripts/data/`. Record the source
 URL, download date, checksum, normalization, and generation parameters for
 each experiment.
 
@@ -23,7 +23,7 @@ Generate the small, deterministic representative-query dataset used by the
 recruiter-facing quickstart with:
 
 ```sh
-python3 scripts/generate_synthetic_dataset.py
+python3 scripts/data/generate_synthetic_dataset.py
 ```
 
 The default creates 64 representatives and 512 queries in 16,384 dimensions
@@ -38,7 +38,7 @@ created or required. The generated directory is excluded from Git.
 Fetch the GDC-backed matrices published by UCSC Xena:
 
 ```sh
-python3 scripts/download_tcga.py
+python3 scripts/data/download_tcga_kidney.py
 ```
 
 UCI lists dataset 892 as an external dataset, so it cannot be imported with
@@ -58,39 +58,26 @@ Transform the matrices into sample-major, row-contiguous `float32`
 representatives and queries for the ANN implementation:
 
 ```sh
-python3 scripts/transform_tcga.py
+python3 scripts/data/transform_tcga_kidney.py
 ```
 
 By default, the transform retains primary solid tumors (TCGA sample-type code
 `01`) and writes to `data/processed/tcga_kidney_v1/`. Participants are assigned
 to a representative-construction pool or a held-out query set, stratified by
 cancer subtype. The transform produces one arithmetic-mean centroid per subtype
-in `representatives.npy`, held-out vectors in `queries.npy`, their labels,
+in `representatives.npy`, explicit centroid labels in
+`representative_labels.npy`, held-out vectors in `queries.npy`, their labels,
 the full `representative_pool.npy` for constructing alternative representatives
 such as medoids or subcentroids, sample and feature tables, and a JSON provenance
 record. The source matrices are streamed, so their full contents are never held
 in memory. Use `--help` for filtering, role fraction, input/output, seed, and
 overwrite options.
 
-After configuring a release build, load the generated representatives and
-queries into the exact, flat, and hierarchical C++ indexes with:
-
-```sh
-./build/nearest_representative_benchmark \
-    --distance l1 \
-    --output results/raw/tcga_l1_benchmark.json
-./build/nearest_representative_benchmark \
-    --distance l2 \
-    --output results/raw/tcga_l2_benchmark.json
-```
-
-The executable intentionally does not load `representative_pool.npy`; that
-matrix is needed only when constructing alternative representatives. Benchmark
-settings, timings, accuracy, correct counts, and agreement with exact search are
-written to `results/raw/tcga_l1_benchmark.json` or
-`results/raw/tcga_l2_benchmark.json`. Both reports also record
-logical index and query-workspace bytes, unique coordinates acquired, their
-fraction of the full dimension, and total sampled multiplicity.
+The kidney-specific preparation workflow is retained as an additional dataset
+example, but it is not one of the six checked-in benchmark configurations. The
+canonical TCGA experiments use the Pan-Cancer workflow below. The benchmark
+executable accepts version-two setup files rather than the former standalone
+`--distance` and `--output` options.
 
 ## TCGA Pan-Cancer
 
@@ -98,7 +85,7 @@ Download matching GDC STAR-FPKM matrices for all 33 TCGA cancer projects from
 the UCSC Xena GDC hub:
 
 ```sh
-python3 scripts/download_tcga_pancancer.py
+python3 scripts/data/download_tcga_pancancer.py
 ```
 
 The current compressed download is approximately 2.8 GiB. The downloader
@@ -117,7 +104,7 @@ Transform the matrices into 33 project centroids and participant-disjoint
 held-out queries with:
 
 ```sh
-python3 scripts/transform_tcga_pancancer.py
+python3 scripts/data/transform_tcga_pancancer.py
 ```
 
 The default filter retains primary solid tumors (sample type `01`) for 32
@@ -128,14 +115,14 @@ cohort is intended; for example, include both primary and metastatic melanoma
 with:
 
 ```sh
-python3 scripts/transform_tcga_pancancer.py \
+python3 scripts/data/transform_tcga_pancancer.py \
     --sample-types TCGA-SKCM=01,06
 ```
 
 The transform streams all source matrices, verifies their feature alignment,
 constructs each centroid only from its representative-pool participants, and
-writes `representatives.npy`, `queries.npy`, `query_labels.npy`, sample and
-feature tables, and complete JSON provenance to
+writes `representatives.npy`, `representative_labels.npy`, `queries.npy`,
+`query_labels.npy`, sample and feature tables, and complete JSON provenance to
 `data/processed/tcga_pancancer_v1/`. The representative-construction samples
 remain identified in `samples.csv` but are not duplicated into another large
 matrix by default. Pass `--write-representative-pool` if alternative centroid,
@@ -145,9 +132,9 @@ To learn several representatives per cancer project, materialize that
 training-only pool and cluster each project independently:
 
 ```sh
-python3 scripts/transform_tcga_pancancer.py \
+python3 scripts/data/transform_tcga_pancancer.py \
     --write-representative-pool --force
-python3 scripts/expand_tcga_pancancer_representatives.py \
+python3 scripts/data/expand_tcga_pancancer_representatives.py \
     --representatives-per-class 4
 ```
 
@@ -158,43 +145,23 @@ rows and `representative_labels.npy`, which maps those rows back to the 33
 cancer labels. Held-out queries are hard-linked unchanged and never participate
 in feature selection, clustering, or centroid construction.
 
-Run the existing benchmark against the transformed data with:
+Run the two canonical CPU experiments against the transformed data with:
 
 ```sh
-./build/nearest_representative_benchmark \
-    --distance l1 \
-    --dataset data/processed/tcga_pancancer_v1 \
-    --output results/raw/tcga_pancancer_l1_benchmark.json
+python3 scripts/benchmark/run_benchmark_sweep.py \
+    --setup experiments/tcga_pancancer/cpu/tcga_pancancer_r33_l2_cpu_sparse_sweep.tsv
 
-./build/nearest_representative_benchmark \
-    --distance l2 \
-    --dataset data/processed/tcga_pancancer_v1 \
-    --output results/raw/tcga_pancancer_l2_benchmark.json
+python3 scripts/benchmark/run_benchmark_sweep.py \
+    --setup experiments/tcga_pancancer/cpu/tcga_pancancer_r33_l2_cpu_uniform_vs_flat.tsv
 ```
 
-For the reproducible multi-seed flat sweep, run the versioned batch setup. Exact
-queries are computed once and shared by all 25 approximate configurations:
+The CUDA L1 experiment uses the same matrices and keeps the CPU exact scan as
+its numerical reference:
 
 ```sh
-python3 scripts/run_benchmark_sweep.py \
-    --setup experiments/tcga_pancancer_flat_sweep.tsv
-
-python3 scripts/run_benchmark_sweep.py \
-    --setup experiments/tcga_pancancer_l2_flat_sweep.tsv
+./build-cuda/nearest_representative_benchmark \
+    --setup experiments/tcga_pancancer/cuda/tcga_pancancer_r33_l1_cuda_exact_vs_flat.tsv
 ```
-
-To test whether the hierarchical L2 projection becomes useful with all 33
-Pan-Cancer representatives, run the matched flat/hierarchical experiment. It
-computes exact predictions once, compares ten projection dimensions over five
-repetition counts and five seeds, and writes aggregate summaries:
-
-```sh
-python3 scripts/run_benchmark_sweep.py \
-    --setup experiments/tcga_pancancer_l2_hierarchical_sweep.tsv
-```
-
-The expanded hierarchy grid now includes ten projection dimensions through
-`p = 128`. Use `--force` to replace a report produced by the earlier grid.
 
 ## COIL-100
 
@@ -202,7 +169,7 @@ Download the processed COIL-100 archive from Columbia University and validate
 its complete inventory with:
 
 ```sh
-python3 scripts/download_coil100.py
+python3 scripts/data/download_coil100.py
 ```
 
 The PPM tarball is about 250 MiB and contains 7,200 views: 100 physical objects at
@@ -218,7 +185,7 @@ description of COIL-100 as 8-bit imagery. Transform them into the benchmark's
 row-major format with:
 
 ```sh
-python3 scripts/transform_coil100.py
+python3 scripts/data/transform_coil100.py
 ```
 
 The default split holds out the contiguous azimuth block from 0 through 85
@@ -227,55 +194,138 @@ representatives is the arithmetic-mean centroid of that object's other 54
 views, so query pixels never contribute to its representative. Pixels are
 normalized channel-wise to `[0,1]` and flattened in row, column, RGB order,
 giving 49,152 dimensions. The transform writes `representatives.npy`,
-`queries.npy`, `query_labels.npy`, sample/feature/representative tables, and a
+`representative_labels.npy`, `queries.npy`, `query_labels.npy`,
+sample/feature/representative tables, and a
 checksum-rich `dataset.json` to `data/processed/coil100_v1/`.
 
 Repeat the experiment with rotated held-out sectors to measure split
 sensitivity, for example:
 
 ```sh
-python3 scripts/transform_coil100.py \
+python3 scripts/data/transform_coil100.py \
     --query-start-angle 90 \
     --output-dir data/processed/coil100_start90_v1
 ```
 
 Pass `--write-representative-pool` only when constructing medoids or multiple
-subcentroids; the optional matrix is about 1.0 GiB. The standard output can be
-loaded directly by the benchmark executable:
+subcentroids; the optional matrix is about 1.0 GiB. The former COIL-100 sweep
+grids are intentionally not part of the six-setup public catalog. To extend the
+evaluation locally, create a version-two setup pointing at the processed
+directory using the contract in `experiments/README.md`.
+
+## GSE2034 breast cancer relapse
+
+Download the official NCBI GEO series matrix and patient-level clinical table:
 
 ```sh
-./build/nearest_representative_benchmark \
-    --distance l1 \
-    --dataset data/processed/coil100_v1 \
-    --output results/raw/coil100_l1_benchmark.json
-
-./build/nearest_representative_benchmark \
-    --distance l2 \
-    --dataset data/processed/coil100_v1 \
-    --output results/raw/coil100_l2_benchmark.json
+python3 scripts/data/download_gse2034.py
 ```
 
-For matched multi-seed flat/hierarchical sweeps over both distances, with exact
-search computed once per distance, run:
+The downloader retains all 286 samples and all 22,283 Affymetrix HG-U133A
+(GPL96) probe sets. GEO stores the clinically relevant relapse endpoint in a
+separate table rather than in the series-matrix sample characteristics. The
+script discovers that table's current GEO blob URL, joins it by GSM accession,
+and validates both files before installing them under `data/raw/gse2034/`.
+It does not mistake the matrix's 10-positive `bone relapses` characteristic for
+the overall distant-metastasis label.
+
+The current patient table has 179 relapse-free and 107 distant-metastasis
+cases. This differs by one case in each class from the older series summary's
+180/106 counts. The patient-level table is used as the authoritative label
+source and the discrepancy is recorded in `manifest.json`.
+
+Create the benchmark matrices with:
 
 ```sh
-python3 scripts/run_benchmark_sweep.py \
-    --setup experiments/coil100_l1_hierarchical_sweep.tsv
-python3 scripts/run_benchmark_sweep.py \
-    --setup experiments/coil100_l2_hierarchical_sweep.tsv
+python3 scripts/data/transform_gse2034.py
 ```
 
-The full parameter grid and interpretation of the generated comparison
-summaries are documented in `experiments/README.md`.
+The default seed-42 stratified split places 200 patients in the representative
+pool and holds out 86 queries. The transform applies `log2(x+1)`, fits each
+probe set's mean and population standard deviation using only the
+representative pool, and applies those statistics to both roles. It then forms
+one training-only arithmetic-mean centroid for each outcome class. The output
+under `data/processed/gse2034_v1/` contains two representatives and 86 queries
+in the original 22,283 dimensions, as well as the training pool, normalization
+arrays, labels, sample/probe tables, checksums, and complete split provenance.
 
-To run the substantially smaller dedicated flat-only sweeps instead:
+To replace each class centroid with ten training-only subcentroids while
+preserving the original two-centroid dataset, run:
 
 ```sh
-python3 scripts/run_benchmark_sweep.py \
-    --setup experiments/coil100_l1_flat_sweep.tsv
-python3 scripts/run_benchmark_sweep.py \
-    --setup experiments/coil100_l2_flat_sweep.tsv
+python3 scripts/data/expand_gse2034_representatives.py
 ```
 
-Each setup executes 30 flat configurations and computes its exact baseline
-once.
+This writes `data/processed/gse2034_k10_v1/` with 20 representatives: ten
+labeled relapse-free and ten labeled distant-metastasis. Each class is
+clustered independently with deterministic k-means++. The 256 highest-variance
+probe sets within that class's representative pool determine assignments, then
+each final subcentroid is recomputed over all 22,283 probe sets. Queries are
+hard-linked unchanged and never influence feature selection, clustering, or
+centroid construction. Use `--representatives-per-class`,
+`--clustering-features`, and `--seed` for alternative expansions.
+
+GSE2034 preparation remains reproducible, but its exploratory sweep grids are
+not part of the six-setup public catalog. Create a version-two setup pointing
+at either processed directory when extending the biological validation.
+
+Use `--representative-fraction`, `--seed`, and `--output-dir` to create
+additional independent splits. Do not use `--force` to rotate a split in place
+when the old split's report needs to remain reproducible; write a new processed
+directory and a matching setup instead.
+
+## Golub ALL versus AML leukemia
+
+Download the pinned official Bioconductor `golubEsets` source package:
+
+```sh
+python3 scripts/data/download_golub.py
+```
+
+The downloader pins Bioconductor release 3.23, package version 1.54.0, and the
+package SHA-256. It validates the package metadata and the serialized
+`Golub_Train` and `Golub_Test` members before atomically installing the archive
+and provenance manifest under `data/raw/golub/`. The package contains 7,129
+Affymetrix Hgu6800 probes for 72 patients. Its documentation notes that the
+values were transformed slightly from the original Golub release and that some
+ancillary covariate provenance is unknown; these caveats are retained in the
+manifest.
+
+Transform it with:
+
+```sh
+python3 scripts/data/transform_golub.py
+```
+
+The transform uses the small `scripts/data/export_golub_esets.R` helper to
+deserialize the package without installing Biobase. R and NumPy are therefore
+runtime requirements for the transformation, but neither is needed by the C++
+benchmark. It preserves the original published split: 38 training samples
+(27 ALL, 11 AML) construct the two class centroids, while all 34 test samples
+(20 ALL, 14 AML) become queries. Every one of the 7,129 probes is retained.
+Per-probe population means and standard deviations are fit only on the
+published training samples and applied to both splits. No log transform is
+used because the packaged expression matrix contains negative values.
+
+The former Golub sweep grids are intentionally not part of the six-setup public
+catalog. To evaluate this dataset locally, create a version-two setup pointing
+at the processed directory using the contract in `experiments/README.md`.
+Classification accuracy then measures agreement with the ALL/AML ground truth;
+agreement with exact search separately measures ANN fidelity.
+
+For an even total of 4, 8, or 16 training-only representatives, cluster each
+diagnosis independently with:
+
+```sh
+python3 scripts/data/expand_golub_representatives.py --total-representatives 4
+python3 scripts/data/expand_golub_representatives.py --total-representatives 8
+python3 scripts/data/expand_golub_representatives.py --total-representatives 16
+```
+
+These create `golub_r4_v1`, `golub_r8_v1`, and `golub_r16_v1`. The requested
+total is divided evenly between ALL and AML. The 256 highest-variance training
+probes within each diagnosis determine k-means assignments, while final
+subcentroids use all 7,129 probes. Published test queries never participate in
+variance ranking, clustering, or centroid construction. With only 11 AML
+training samples, the 16-representative case necessarily contains several
+singleton AML clusters and should be treated as an overfitting diagnostic.

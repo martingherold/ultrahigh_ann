@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = PROJECT_ROOT / "scripts" / "run_synthetic_quickstart.py"
+SCRIPT = PROJECT_ROOT / "scripts" / "benchmark" / "run_synthetic_quickstart.py"
 
 
 class RunSyntheticQuickstartTest(unittest.TestCase):

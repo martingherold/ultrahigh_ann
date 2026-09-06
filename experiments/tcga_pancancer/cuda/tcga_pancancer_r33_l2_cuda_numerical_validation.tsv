@@ -1,0 +1,19 @@
+# Numerical audit of both CUDA L2 query paths on the 33 TCGA representatives.
+# CPU binary64 predictions are the reference. No sampled index or probability
+# model is involved, so agreement differences isolate query arithmetic.
+ultrahigh_ann_benchmark_setup_v2
+dataset	../../../data/processed/tcga_pancancer_v1
+json_output	../../../results/raw/tcga_pancancer_r33_l2_cuda_numerical_validation.json
+csv_output	../../../results/raw/tcga_pancancer_r33_l2_cuda_numerical_validation.csv
+distance	l2
+reference	exact_cpu
+diagnostics	selected_distances
+max_queries	0
+batch_sizes	32,128,512
+warmups	1
+trials	5
+device	0
+
+run	exact_cpu	exact	backend=cpu	strategy=sequential	batch_sizes=1
+run	exact_cuda_direct	exact	backend=cuda	strategy=direct
+run	exact_cuda_gemm	exact	backend=cuda	strategy=gemm

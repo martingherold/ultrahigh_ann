@@ -1,0 +1,77 @@
+# Reviewer-runnable CUDA L2 crossover demonstration on 7,028 TCGA
+# training representatives and all 3,013 held-back queries.
+#
+# This compact, deterministic setup tests the scoped observation that the
+# hierarchy can improve the direct-scan latency/fidelity frontier at lower
+# accuracy, while flat search takes over at higher accuracy. GEMM counterparts
+# remain present to show that the observation is strategy-dependent.
+#
+# Flat follows T={1,2,4,8,16,32,48,64}. T=48 brackets the observed
+# high-accuracy crossover between the powers-of-two controls.
+# Hierarchy follows a predeclared staircase from low to high fidelity:
+# (T,p)={(4,32),(4,128),(16,128),(16,512),(64,512),(128,1536)}.
+# All approximate runs use seed=42, one warmup, three timed trials, and B=128.
+# The fixed seed makes this a reproducible demonstration, not a sampling-
+# variance study. The ignored exploratory checkpoints contain the broader
+# parameter search; they are not part of the public experiment catalog.
+#
+# The strategy covers both FP32 stages: direct JL plus direct scan, or SGEMM
+# JL plus SGEMM scan. exact_cuda_direct is the FP32 device reference;
+# exact_cuda_gemm remains a reported candidate so numerical selection
+# differences stay visible. The exact runs use one trial to avoid spending
+# several minutes repeatedly scanning the full 7,028 x 60,660 matrix.
+# Selected-distance diagnostics avoid materializing the 21-million-entry
+# full distance table.
+ultrahigh_ann_benchmark_setup_v2
+dataset	../../../data/processed/tcga_pancancer_v1
+representatives_file	representative_pool.npy
+representative_labels_file	representative_pool_labels.npy
+queries_file	queries.npy
+query_labels_file	query_labels.npy
+probabilities	../../../data/processed/tcga_pancancer_v1/l2_probabilities_7028_gpu_fp32.uap
+probability_policy	load
+json_output	../../../results/raw/tcga_pancancer_r7028_l2_cuda_crossover.json
+csv_output	../../../results/raw/tcga_pancancer_r7028_l2_cuda_crossover.csv
+distance	l2
+reference	exact_cuda_direct
+diagnostics	selected_distances
+max_queries	0
+batch_sizes	128
+warmups	1
+trials	3
+device	0
+
+run	exact_cuda_direct	exact	backend=cuda	strategy=direct	warmups=0	trials=1
+run	exact_cuda_gemm	exact	backend=cuda	strategy=gemm	warmups=0	trials=1
+
+# Flat controls.
+run	flat_t1_seed42_direct	flat	backend=cuda	strategy=direct	repetitions=1	seed=42
+run	flat_t1_seed42_gemm	flat	backend=cuda	strategy=gemm	repetitions=1	seed=42
+run	flat_t2_seed42_direct	flat	backend=cuda	strategy=direct	repetitions=2	seed=42
+run	flat_t2_seed42_gemm	flat	backend=cuda	strategy=gemm	repetitions=2	seed=42
+run	flat_t4_seed42_direct	flat	backend=cuda	strategy=direct	repetitions=4	seed=42
+run	flat_t4_seed42_gemm	flat	backend=cuda	strategy=gemm	repetitions=4	seed=42
+run	flat_t8_seed42_direct	flat	backend=cuda	strategy=direct	repetitions=8	seed=42
+run	flat_t8_seed42_gemm	flat	backend=cuda	strategy=gemm	repetitions=8	seed=42
+run	flat_t16_seed42_direct	flat	backend=cuda	strategy=direct	repetitions=16	seed=42
+run	flat_t16_seed42_gemm	flat	backend=cuda	strategy=gemm	repetitions=16	seed=42
+run	flat_t32_seed42_direct	flat	backend=cuda	strategy=direct	repetitions=32	seed=42
+run	flat_t32_seed42_gemm	flat	backend=cuda	strategy=gemm	repetitions=32	seed=42
+run	flat_t48_seed42_direct	flat	backend=cuda	strategy=direct	repetitions=48	seed=42
+run	flat_t48_seed42_gemm	flat	backend=cuda	strategy=gemm	repetitions=48	seed=42
+run	flat_t64_seed42_direct	flat	backend=cuda	strategy=direct	repetitions=64	seed=42
+run	flat_t64_seed42_gemm	flat	backend=cuda	strategy=gemm	repetitions=64	seed=42
+
+# Hierarchical crossover staircase.
+run	hier_t4_p32_seed42_direct	hierarchical	backend=cuda	strategy=direct	repetitions=4	seed=42	projection_dimension=32
+run	hier_t4_p32_seed42_gemm	hierarchical	backend=cuda	strategy=gemm	repetitions=4	seed=42	projection_dimension=32
+run	hier_t4_p128_seed42_direct	hierarchical	backend=cuda	strategy=direct	repetitions=4	seed=42	projection_dimension=128
+run	hier_t4_p128_seed42_gemm	hierarchical	backend=cuda	strategy=gemm	repetitions=4	seed=42	projection_dimension=128
+run	hier_t16_p128_seed42_direct	hierarchical	backend=cuda	strategy=direct	repetitions=16	seed=42	projection_dimension=128
+run	hier_t16_p128_seed42_gemm	hierarchical	backend=cuda	strategy=gemm	repetitions=16	seed=42	projection_dimension=128
+run	hier_t16_p512_seed42_direct	hierarchical	backend=cuda	strategy=direct	repetitions=16	seed=42	projection_dimension=512
+run	hier_t16_p512_seed42_gemm	hierarchical	backend=cuda	strategy=gemm	repetitions=16	seed=42	projection_dimension=512
+run	hier_t64_p512_seed42_direct	hierarchical	backend=cuda	strategy=direct	repetitions=64	seed=42	projection_dimension=512
+run	hier_t64_p512_seed42_gemm	hierarchical	backend=cuda	strategy=gemm	repetitions=64	seed=42	projection_dimension=512
+run	hier_t128_p1536_seed42_direct	hierarchical	backend=cuda	strategy=direct	repetitions=128	seed=42	projection_dimension=1536
+run	hier_t128_p1536_seed42_gemm	hierarchical	backend=cuda	strategy=gemm	repetitions=128	seed=42	projection_dimension=1536

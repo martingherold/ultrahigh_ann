@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for scripts/download_tcga_pancancer.py without network access."""
+"""Tests for scripts/data/download_tcga_pancancer.py without network access."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = PROJECT_ROOT / "scripts" / "download_tcga_pancancer.py"
+SCRIPT = PROJECT_ROOT / "scripts" / "data" / "download_tcga_pancancer.py"
 SPEC = importlib.util.spec_from_file_location(
     "download_tcga_pancancer",
     SCRIPT,

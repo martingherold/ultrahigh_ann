@@ -99,6 +99,22 @@ class BenchmarkSchemaTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "not bound"):
             validate_report_provenance(report)
 
+    def test_every_setup_uses_v2_and_parses(self) -> None:
+        setups = sorted((PROJECT_ROOT / "experiments").rglob("*.tsv"))
+        self.assertTrue(setups)
+        for setup in setups:
+            with self.subTest(setup=setup.relative_to(PROJECT_ROOT)):
+                first = next(
+                    line.strip()
+                    for line in setup.read_text(encoding="utf-8").splitlines()
+                    if line.strip() and not line.lstrip().startswith("#")
+                )
+                self.assertEqual(first, "ultrahigh_ann_benchmark_setup_v2")
+                _, runs = parse_setup(setup)
+                references = [run for run in runs if run["reference"]]
+                self.assertEqual(len(references), 1)
+                self.assertEqual(references[0]["index"], "exact")
+
     def test_v1_setup_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             setup = Path(temporary_directory) / "legacy.tsv"

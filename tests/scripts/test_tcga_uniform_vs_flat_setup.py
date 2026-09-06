@@ -10,16 +10,14 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SETUPS = (
     (
-        PROJECT_ROOT / "experiments" / "tcga_pancancer_l2_uniform_vs_flat.tsv",
-        "../data/processed/tcga_pancancer_v1",
-        "../results/raw/tcga_pancancer_l2_uniform_vs_flat.json",
+        PROJECT_ROOT
+        / "experiments"
+        / "tcga_pancancer"
+        / "cpu"
+        / "tcga_pancancer_r33_l2_cpu_uniform_vs_flat.tsv",
+        "../../../data/processed/tcga_pancancer_v1",
+        "../../../results/raw/tcga_pancancer_r33_l2_cpu_uniform_vs_flat.json",
         {1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048},
-    ),
-    (
-        PROJECT_ROOT / "experiments" / "tcga_pancancer_k10_l2_uniform_vs_flat.tsv",
-        "../data/processed/tcga_pancancer_k10_v1",
-        "../results/raw/tcga_pancancer_k10_l2_uniform_vs_flat.json",
-        {1, 2, 4, 8, 16, 32, 64, 128, 256, 512},
     ),
 )
 
@@ -42,9 +40,11 @@ class TcgaUniformVsFlatSetupTest(unittest.TestCase):
                     if not line or line.startswith("#"):
                         continue
                     fields = line.split("\t")
-                    if fields[0] in ("dataset", "output"):
+                    if fields[0] in ("dataset", "json_output"):
                         directives[fields[0]] = fields[1]
                     if fields[0] != "run":
+                        continue
+                    if fields[2] == "exact":
                         continue
                     settings = dict(field.split("=", 1) for field in fields[3:])
                     runs.add(
@@ -57,7 +57,7 @@ class TcgaUniformVsFlatSetupTest(unittest.TestCase):
                     run_count += 1
 
                 self.assertEqual(directives["dataset"], expected_dataset)
-                self.assertEqual(directives["output"], expected_output)
+                self.assertEqual(directives["json_output"], expected_output)
                 self.assertEqual(run_count, len(expected))
                 self.assertEqual(runs, expected)
 

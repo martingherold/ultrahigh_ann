@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Integration tests for Pan-Cancer representative expansion."""
+"""Integration tests for GSE2034 representative expansion."""
 
 from __future__ import annotations
 
@@ -15,34 +15,36 @@ import numpy as np
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = (
-    PROJECT_ROOT
-    / "scripts"
-    / "data"
-    / "expand_tcga_pancancer_representatives.py"
-)
+SCRIPT = PROJECT_ROOT / "scripts" / "data" / "expand_gse2034_representatives.py"
 
 
-class ExpandTcgaPancancerRepresentativesTest(unittest.TestCase):
+class ExpandGse2034RepresentativesTest(unittest.TestCase):
     def create_fixture(self, directory: Path) -> None:
         directory.mkdir()
-        class_a = np.asarray(
-            [
-                [0.0, 1.0, 2.0, 3.0],
-                [1.0, 2.0, 3.0, 4.0],
-                [10.0, 11.0, 12.0, 13.0],
-                [11.0, 12.0, 13.0, 14.0],
-            ],
+        class_zero = np.asarray(
+            (
+                (0.0, 1.0, 2.0, 3.0),
+                (1.0, 2.0, 3.0, 4.0),
+                (10.0, 11.0, 12.0, 13.0),
+                (11.0, 12.0, 13.0, 14.0),
+            ),
             dtype="<f4",
         )
-        class_b = class_a + np.float32(100.0)
-        pool = np.vstack((class_a[[0, 2]], class_b[[0, 2]], class_a[[1, 3]], class_b[[1, 3]]))
-        pool_labels = np.asarray([3, 3, 8, 8, 3, 3, 8, 8], dtype="<u2")
+        class_one = class_zero + np.float32(100.0)
+        pool = np.vstack(
+            (
+                class_zero[[0, 2]],
+                class_one[[0, 2]],
+                class_zero[[1, 3]],
+                class_one[[1, 3]],
+            )
+        )
+        pool_labels = np.asarray((0, 0, 1, 1, 0, 0, 1, 1), dtype="<u2")
         queries = np.asarray(
-            [[0.25, 1.25, 2.25, 3.25], [110.25, 111.25, 112.25, 113.25]],
+            ((0.25, 1.25, 2.25, 3.25), (110.25, 111.25, 112.25, 113.25)),
             dtype="<f4",
         )
-        query_labels = np.asarray([3, 8], dtype="<u2")
+        query_labels = np.asarray((0, 1), dtype="<u2")
         np.save(directory / "representative_pool.npy", pool, allow_pickle=False)
         np.save(
             directory / "representative_pool_labels.npy",
@@ -51,33 +53,53 @@ class ExpandTcgaPancancerRepresentativesTest(unittest.TestCase):
         )
         np.save(directory / "queries.npy", queries, allow_pickle=False)
         np.save(directory / "query_labels.npy", query_labels, allow_pickle=False)
+        np.save(
+            directory / "normalization_mean.npy",
+            np.zeros(4, dtype="<f4"),
+            allow_pickle=False,
+        )
+        np.save(
+            directory / "normalization_scale.npy",
+            np.ones(4, dtype="<f4"),
+            allow_pickle=False,
+        )
         with (directory / "representatives.csv").open(
-            "w", encoding="utf-8", newline=""
+            "w",
+            encoding="utf-8",
+            newline="",
         ) as output:
             writer = csv.DictWriter(
                 output,
-                fieldnames=("row_index", "project_id", "cancer_type", "label"),
+                fieldnames=(
+                    "representative_row",
+                    "label",
+                    "outcome",
+                    "construction",
+                    "source_sample_count",
+                ),
             )
             writer.writeheader()
             writer.writerow(
                 {
-                    "row_index": 0,
-                    "project_id": "TCGA-A",
-                    "cancer_type": "Cancer A",
-                    "label": 3,
+                    "representative_row": 0,
+                    "label": 0,
+                    "outcome": "relapse_free",
+                    "construction": "arithmetic_mean_centroid",
+                    "source_sample_count": 4,
                 }
             )
             writer.writerow(
                 {
-                    "row_index": 1,
-                    "project_id": "TCGA-B",
-                    "cancer_type": "Cancer B",
-                    "label": 8,
+                    "representative_row": 1,
+                    "label": 1,
+                    "outcome": "distant_metastasis",
+                    "construction": "arithmetic_mean_centroid",
+                    "source_sample_count": 4,
                 }
             )
         for name, contents in (
-            ("features.csv", "feature_id\nGENE1\n"),
-            ("samples.csv", "sample_id\nSAMPLE1\n"),
+            ("features.csv", "feature_index,probe_set_id\n0,probe_0\n"),
+            ("samples.csv", "geo_accession,label\nGSM1,0\n"),
             ("source_manifest.json", "{}\n"),
             ("dataset.json", '{"fixture": true}\n'),
         ):
@@ -123,36 +145,34 @@ class ExpandTcgaPancancerRepresentativesTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
 
             representatives = np.load(
-                output / "representatives.npy", allow_pickle=False
+                output / "representatives.npy",
+                allow_pickle=False,
             )
-            representative_labels = np.load(
-                output / "representative_labels.npy", allow_pickle=False
+            labels = np.load(
+                output / "representative_labels.npy",
+                allow_pickle=False,
             )
             self.assertEqual(representatives.shape, (4, 4))
-            self.assertEqual(representatives.dtype, np.dtype("<f4"))
-            np.testing.assert_array_equal(
-                representative_labels,
-                np.asarray([3, 3, 8, 8], dtype="<u2"),
-            )
-            expected_by_label = {
-                3: np.asarray(
-                    [[0.5, 1.5, 2.5, 3.5], [10.5, 11.5, 12.5, 13.5]]
+            np.testing.assert_array_equal(labels, (0, 0, 1, 1))
+            expected = {
+                0: np.asarray(
+                    ((0.5, 1.5, 2.5, 3.5), (10.5, 11.5, 12.5, 13.5))
                 ),
-                8: np.asarray(
-                    [[100.5, 101.5, 102.5, 103.5], [110.5, 111.5, 112.5, 113.5]]
+                1: np.asarray(
+                    (
+                        (100.5, 101.5, 102.5, 103.5),
+                        (110.5, 111.5, 112.5, 113.5),
+                    )
                 ),
             }
-            for label, expected in expected_by_label.items():
-                actual = representatives[representative_labels == label]
+            for label, expected_centroids in expected.items():
+                actual = representatives[labels == label]
                 actual = actual[np.argsort(actual[:, 0])]
-                np.testing.assert_allclose(actual, expected)
+                np.testing.assert_allclose(actual, expected_centroids)
 
-            np.testing.assert_array_equal(
-                np.load(output / "queries.npy", allow_pickle=False),
-                np.load(source / "queries.npy", allow_pickle=False),
-            )
             with (output / "representatives.csv").open(
-                encoding="utf-8", newline=""
+                encoding="utf-8",
+                newline="",
             ) as source_file:
                 records = list(csv.DictReader(source_file))
             self.assertEqual(len(records), 4)
@@ -165,9 +185,16 @@ class ExpandTcgaPancancerRepresentativesTest(unittest.TestCase):
             )
             self.assertEqual(metadata["representatives"]["shape"], [4, 4])
             self.assertEqual(metadata["representatives"]["count_per_class"], 2)
-            self.assertIn("only representative_pool.npy", metadata["leakage_control"])
+            self.assertIn(
+                "only representative_pool.npy",
+                metadata["leakage_control"],
+            )
             self.assertTrue((output / "source_dataset.json").is_file())
             self.assertFalse((output / "representative_pool.npy").exists())
+            np.testing.assert_array_equal(
+                np.load(output / "queries.npy", allow_pickle=False),
+                np.load(source / "queries.npy", allow_pickle=False),
+            )
 
             second_result = self.run_script(source, output)
             self.assertNotEqual(second_result.returncode, 0)

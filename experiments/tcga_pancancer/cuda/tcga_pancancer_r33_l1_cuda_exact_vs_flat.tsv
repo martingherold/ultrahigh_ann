@@ -1,0 +1,37 @@
+# CUDA L1 comparison on the 33 TCGA subtype representatives.
+# The binary64 CPU exact run remains the reference so that binary32 CUDA
+# accumulation differences are visible instead of being folded into quality.
+ultrahigh_ann_benchmark_setup_v2
+dataset	../../../data/processed/tcga_pancancer_v1
+json_output	../../../results/raw/tcga_pancancer_r33_l1_cuda_exact_vs_flat.json
+csv_output	../../../results/raw/tcga_pancancer_r33_l1_cuda_exact_vs_flat.csv
+probability_policy	sequential
+distance	l1
+reference	exact_cpu
+diagnostics	selected_distances
+max_queries	0
+batch_sizes	32,128,512
+warmups	1
+trials	5
+device	0
+
+run	exact_cpu	exact	backend=cpu	strategy=sequential	batch_sizes=1
+run	exact_cuda_direct	exact	backend=cuda	strategy=direct
+
+run	flat_t64_seed7	flat	backend=cuda	strategy=direct	repetitions=64	seed=7
+run	flat_t64_seed20	flat	backend=cuda	strategy=direct	repetitions=64	seed=20
+run	flat_t64_seed42	flat	backend=cuda	strategy=direct	repetitions=64	seed=42
+run	flat_t64_seed1312	flat	backend=cuda	strategy=direct	repetitions=64	seed=1312
+run	flat_t64_seed2026	flat	backend=cuda	strategy=direct	repetitions=64	seed=2026
+
+run	flat_t256_seed7	flat	backend=cuda	strategy=direct	repetitions=256	seed=7
+run	flat_t256_seed20	flat	backend=cuda	strategy=direct	repetitions=256	seed=20
+run	flat_t256_seed42	flat	backend=cuda	strategy=direct	repetitions=256	seed=42
+run	flat_t256_seed1312	flat	backend=cuda	strategy=direct	repetitions=256	seed=1312
+run	flat_t256_seed2026	flat	backend=cuda	strategy=direct	repetitions=256	seed=2026
+
+run	flat_t1024_seed7	flat	backend=cuda	strategy=direct	repetitions=1024	seed=7
+run	flat_t1024_seed20	flat	backend=cuda	strategy=direct	repetitions=1024	seed=20
+run	flat_t1024_seed42	flat	backend=cuda	strategy=direct	repetitions=1024	seed=42
+run	flat_t1024_seed1312	flat	backend=cuda	strategy=direct	repetitions=1024	seed=1312
+run	flat_t1024_seed2026	flat	backend=cuda	strategy=direct	repetitions=1024	seed=2026

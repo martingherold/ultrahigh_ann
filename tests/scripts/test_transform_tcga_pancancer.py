@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Integration tests for scripts/transform_tcga_pancancer.py."""
+"""Integration tests for scripts/data/transform_tcga_pancancer.py."""
 
 from __future__ import annotations
 
@@ -17,8 +17,8 @@ import numpy as np
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DOWNLOAD_SCRIPT = PROJECT_ROOT / "scripts" / "download_tcga_pancancer.py"
-TRANSFORM_SCRIPT = PROJECT_ROOT / "scripts" / "transform_tcga_pancancer.py"
+DOWNLOAD_SCRIPT = PROJECT_ROOT / "scripts" / "data" / "download_tcga_pancancer.py"
+TRANSFORM_SCRIPT = PROJECT_ROOT / "scripts" / "data" / "transform_tcga_pancancer.py"
 SPEC = importlib.util.spec_from_file_location(
     "download_tcga_pancancer_for_transform_test",
     DOWNLOAD_SCRIPT,
@@ -127,16 +127,34 @@ class TransformTcgaPancancerTest(unittest.TestCase):
                 allow_pickle=False,
             )
             queries = np.load(output / "queries.npy", allow_pickle=False)
+            representative_labels = np.load(
+                output / "representative_labels.npy",
+                allow_pickle=False,
+            )
             query_labels = np.load(
                 output / "query_labels.npy",
                 allow_pickle=False,
             )
             self.assertEqual(representatives.shape, (33, 3))
             self.assertEqual(queries.shape, (33, 3))
+            self.assertEqual(representative_labels.shape, (33,))
             self.assertEqual(query_labels.shape, (33,))
             self.assertEqual(representatives.dtype, np.dtype("<f4"))
             self.assertEqual(queries.dtype, np.dtype("<f4"))
+            self.assertEqual(representative_labels.dtype, np.dtype("<u2"))
             self.assertEqual(query_labels.dtype, np.dtype("<u2"))
+            np.testing.assert_array_equal(
+                representative_labels,
+                np.asarray(
+                    [cohort.label for cohort in DOWNLOAD_MODULE.COHORTS],
+                    dtype=np.dtype("<u2"),
+                ),
+            )
+            self.assertTrue(
+                set(int(label) for label in np.unique(query_labels)).issubset(
+                    set(int(label) for label in representative_labels)
+                )
+            )
             self.assertTrue(representatives.flags.c_contiguous)
             self.assertTrue(queries.flags.c_contiguous)
             self.assertFalse((output / "representative_pool.npy").exists())
@@ -184,6 +202,14 @@ class TransformTcgaPancancerTest(unittest.TestCase):
             self.assertEqual(
                 metadata["matrices"]["queries"]["shape"],
                 [33, 3],
+            )
+            self.assertEqual(
+                metadata["labels"]["representative_file"],
+                "representative_labels.npy",
+            )
+            self.assertIn(
+                "representative_labels.npy",
+                metadata["generated_files"],
             )
             self.assertEqual(
                 metadata["sample_filter"]

@@ -13,106 +13,8 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = PROJECT_ROOT / "scripts" / "run_benchmark_sweep.py"
-
-
-FAKE_BENCHMARK = r"""#!/usr/bin/env python3
-import json
-import sys
-from pathlib import Path
-
-setup_path = Path(sys.argv[sys.argv.index("--setup") + 1]).resolve()
-output_path = None
-runs = []
-
-def approximation(agreement):
-    optimal = round(agreement * 10)
-    non_optimal = 10 - optimal
-    distribution = {
-        "count": 10,
-        "mean": 1.01,
-        "median": 1.0,
-        "percentile_95": 1.05,
-        "percentile_99": 1.05,
-        "maximum": 1.05,
-    }
-    return {
-        "optimal_representative_count": optimal,
-        "optimal_representative_rate": agreement,
-        "non_optimal_count": non_optimal,
-        "non_optimal_rate": 1.0 - agreement,
-        "distance_ratio": {
-            "zero_optimum_queries_excluded": 0,
-            "distribution": distribution,
-        },
-        "non_optimal_distance_ratio": {
-            "eligible_non_optimal_count": non_optimal,
-            "zero_optimum_non_optimal_count": 0,
-            "mean": 1.05 if non_optimal else None,
-            "mean_relative_excess": 0.05 if non_optimal else None,
-        },
-        "approximation_guarantee_failures": [
-            {"epsilon": epsilon, "violation_rate": 1.0 - agreement}
-            for epsilon in (0.01, 0.05, 0.10, 0.20)
-        ],
-        "returned_representative_rank": {"distribution": distribution},
-    }
-
-for raw_line in setup_path.read_text(encoding="utf-8").splitlines():
-    fields = raw_line.split("\t")
-    if fields[0] == "output":
-        configured = Path(fields[1])
-        output_path = (
-            configured if configured.is_absolute() else setup_path.parent / configured
-        ).resolve()
-    elif fields[0] == "run":
-        settings = dict(field.split("=", 1) for field in fields[3:])
-        repetitions = int(settings["repetitions"])
-        seed = int(settings["seed"])
-        agreement = 0.90 + repetitions / 10_000 + seed / 100_000
-        runs.append(
-            {
-                "name": fields[1],
-                "method": fields[2],
-                "settings": {key: int(value) for key, value in settings.items()},
-                "result": {
-                    "build_ms": 3.0,
-                    "query_total_ms": 2.0,
-                    "microseconds_per_query": 200.0,
-                    "correct": 8,
-                    "query_count": 10,
-                    "accuracy": 0.8,
-                    "agreement_with_exact": agreement,
-                    "approximation": approximation(agreement),
-                    "space": {"index_payload_bytes": 1_000},
-                    "coordinate_access": {
-                        "unique_coordinates": repetitions // 2,
-                        "dimension_fraction": repetitions / 200,
-                        "sampled_multiplicity": repetitions * 4,
-                    },
-                },
-            }
-        )
-
-report = {
-    "schema_version": 4,
-    "setup_file": str(setup_path),
-    "dataset": {"representative_count": 33, "dimension": 100},
-    "exact": {
-        "build_ms": 2.0,
-        "query_total_ms": 10.0,
-        "microseconds_per_query": 1000.0,
-        "correct": 8,
-        "query_count": 10,
-        "accuracy": 0.8,
-        "agreement_with_exact": None,
-        "space": {"index_payload_bytes": 10_000},
-    },
-    "runs": runs,
-}
-output_path.parent.mkdir(parents=True, exist_ok=True)
-output_path.write_text(json.dumps(report), encoding="utf-8")
-"""
+SCRIPT = PROJECT_ROOT / "scripts" / "benchmark" / "run_benchmark_sweep.py"
+FAKE_BENCHMARK_SOURCE = PROJECT_ROOT / "tests" / "scripts" / "fake_schema5_benchmark.py"
 
 
 class RunBenchmarkSweepFlatTest(unittest.TestCase):
@@ -121,15 +23,22 @@ class RunBenchmarkSweepFlatTest(unittest.TestCase):
         root: Path,
     ) -> tuple[Path, Path, Path]:
         benchmark = root / "fake_benchmark.py"
-        benchmark.write_text(FAKE_BENCHMARK, encoding="utf-8")
+        benchmark.write_text(
+            FAKE_BENCHMARK_SOURCE.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
         benchmark.chmod(0o755)
         report = root / "batch.json"
         setup = root / "setup.tsv"
         setup.write_text(
-            "ultrahigh_ann_benchmark_setup_v1\n"
+            "ultrahigh_ann_benchmark_setup_v2\n"
             "dataset\tdataset\n"
-            f"output\t{report.name}\n"
+            f"json_output\t{report.name}\n"
+            "csv_output\tbatch.csv\n"
+            "reference\texact\n"
+            "diagnostics\tselected_distances\n"
             "max_queries\t0\n"
+            "run\texact\texact\n"
             "run\tflat_t128_seed7\tflat\trepetitions=128\tseed=7\n"
             "run\tflat_t128_seed42\tflat\trepetitions=128\tseed=42\n"
             "run\tflat_t256_seed7\tflat\trepetitions=256\tseed=7\n"
@@ -219,6 +128,48 @@ class RunBenchmarkSweepFlatTest(unittest.TestCase):
             self.assertIn("--setup", result.stdout)
             self.assertFalse(report.exists())
 
+    def test_zero_byte_sampled_index_has_undefined_compression(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            benchmark, setup, report = self.create_inputs(root)
+            command = (
+                sys.executable,
+                str(SCRIPT),
+                "--benchmark",
+                str(benchmark),
+                "--setup",
+                str(setup),
+            )
+            first = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(first.returncode, 0, first.stderr)
+
+            payload = json.loads(report.read_text(encoding="utf-8"))
+            payload["runs"][1]["space"]["index_payload_bytes"] = 0
+            report.write_text(json.dumps(payload), encoding="utf-8")
+            second = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(second.returncode, 0, second.stderr)
+            summary = json.loads(
+                (root / "batch_summary.json").read_text(encoding="utf-8")
+            )
+            self.assertIsNone(summary["runs"][0]["index_compression"])
+            self.assertEqual(
+                summary["aggregates"][0]["metrics"]["index_compression"][
+                    "observation_count"
+                ],
+                1,
+            )
+
     def test_mixed_flat_uniform_setup_summarizes_both_methods(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -265,10 +216,14 @@ class RunBenchmarkSweepFlatTest(unittest.TestCase):
             root = Path(temporary_directory)
             benchmark, setup, _ = self.create_inputs(root)
             setup.write_text(
-                "ultrahigh_ann_benchmark_setup_v1\n"
+                "ultrahigh_ann_benchmark_setup_v2\n"
                 "dataset\tdataset\n"
-                "output\tbatch.json\n"
+                "json_output\tbatch.json\n"
+                "csv_output\tbatch.csv\n"
+                "reference\texact\n"
+                "diagnostics\tselected_distances\n"
                 "max_queries\t0\n"
+                "run\texact\texact\n"
                 "run\tuniform_t128_seed7\tuniform"
                 "\trepetitions=128\tseed=7\n",
                 encoding="utf-8",

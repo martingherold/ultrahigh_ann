@@ -1,0 +1,124 @@
+# CPU L2 sweep on the 33 TCGA subtype representatives.
+# Paths are resolved relative to this setup file.
+# Exact L2 search is configured explicitly and runs once before all approximate configurations.
+# Five seeds are retained for statistical summaries.
+# Flat budgets retain the low-latency knee, README operating points, and saturation endpoint.
+# Hierarchical runs focus on the plausible finite-instance region: T <= 32 and p >= 32.
+ultrahigh_ann_benchmark_setup_v2
+dataset	../../../data/processed/tcga_pancancer_v1
+json_output	../../../results/raw/tcga_pancancer_r33_l2_cpu_sparse_sweep.json
+csv_output	../../../results/raw/tcga_pancancer_r33_l2_cpu_sparse_sweep.csv
+reference	exact
+diagnostics	full_distance_table
+distance	l2
+max_queries	0
+
+run	exact	exact
+
+run	flat_t1_seed7	flat	repetitions=1	seed=7
+run	flat_t1_seed20	flat	repetitions=1	seed=20
+run	flat_t1_seed42	flat	repetitions=1	seed=42
+run	flat_t1_seed1312	flat	repetitions=1	seed=1312
+run	flat_t1_seed2026	flat	repetitions=1	seed=2026
+
+run	flat_t2_seed7	flat	repetitions=2	seed=7
+run	flat_t2_seed20	flat	repetitions=2	seed=20
+run	flat_t2_seed42	flat	repetitions=2	seed=42
+run	flat_t2_seed1312	flat	repetitions=2	seed=1312
+run	flat_t2_seed2026	flat	repetitions=2	seed=2026
+
+run	flat_t4_seed7	flat	repetitions=4	seed=7
+run	flat_t4_seed20	flat	repetitions=4	seed=20
+run	flat_t4_seed42	flat	repetitions=4	seed=42
+run	flat_t4_seed1312	flat	repetitions=4	seed=1312
+run	flat_t4_seed2026	flat	repetitions=4	seed=2026
+
+run	flat_t8_seed7	flat	repetitions=8	seed=7
+run	hier_t8_p32_seed7	hierarchical	repetitions=8	seed=7	projection_dimension=32
+run	hier_t8_p64_seed7	hierarchical	repetitions=8	seed=7	projection_dimension=64
+run	hier_t8_p96_seed7	hierarchical	repetitions=8	seed=7	projection_dimension=96
+run	hier_t8_p128_seed7	hierarchical	repetitions=8	seed=7	projection_dimension=128
+run	flat_t8_seed20	flat	repetitions=8	seed=20
+run	hier_t8_p32_seed20	hierarchical	repetitions=8	seed=20	projection_dimension=32
+run	hier_t8_p64_seed20	hierarchical	repetitions=8	seed=20	projection_dimension=64
+run	hier_t8_p96_seed20	hierarchical	repetitions=8	seed=20	projection_dimension=96
+run	hier_t8_p128_seed20	hierarchical	repetitions=8	seed=20	projection_dimension=128
+run	flat_t8_seed42	flat	repetitions=8	seed=42
+run	hier_t8_p32_seed42	hierarchical	repetitions=8	seed=42	projection_dimension=32
+run	hier_t8_p64_seed42	hierarchical	repetitions=8	seed=42	projection_dimension=64
+run	hier_t8_p96_seed42	hierarchical	repetitions=8	seed=42	projection_dimension=96
+run	hier_t8_p128_seed42	hierarchical	repetitions=8	seed=42	projection_dimension=128
+run	flat_t8_seed1312	flat	repetitions=8	seed=1312
+run	hier_t8_p32_seed1312	hierarchical	repetitions=8	seed=1312	projection_dimension=32
+run	hier_t8_p64_seed1312	hierarchical	repetitions=8	seed=1312	projection_dimension=64
+run	hier_t8_p96_seed1312	hierarchical	repetitions=8	seed=1312	projection_dimension=96
+run	hier_t8_p128_seed1312	hierarchical	repetitions=8	seed=1312	projection_dimension=128
+run	flat_t8_seed2026	flat	repetitions=8	seed=2026
+run	hier_t8_p32_seed2026	hierarchical	repetitions=8	seed=2026	projection_dimension=32
+run	hier_t8_p64_seed2026	hierarchical	repetitions=8	seed=2026	projection_dimension=64
+run	hier_t8_p96_seed2026	hierarchical	repetitions=8	seed=2026	projection_dimension=96
+run	hier_t8_p128_seed2026	hierarchical	repetitions=8	seed=2026	projection_dimension=128
+
+run	flat_t16_seed7	flat	repetitions=16	seed=7
+run	hier_t16_p32_seed7	hierarchical	repetitions=16	seed=7	projection_dimension=32
+run	hier_t16_p64_seed7	hierarchical	repetitions=16	seed=7	projection_dimension=64
+run	hier_t16_p96_seed7	hierarchical	repetitions=16	seed=7	projection_dimension=96
+run	hier_t16_p128_seed7	hierarchical	repetitions=16	seed=7	projection_dimension=128
+run	flat_t16_seed20	flat	repetitions=16	seed=20
+run	hier_t16_p32_seed20	hierarchical	repetitions=16	seed=20	projection_dimension=32
+run	hier_t16_p64_seed20	hierarchical	repetitions=16	seed=20	projection_dimension=64
+run	hier_t16_p96_seed20	hierarchical	repetitions=16	seed=20	projection_dimension=96
+run	hier_t16_p128_seed20	hierarchical	repetitions=16	seed=20	projection_dimension=128
+run	flat_t16_seed42	flat	repetitions=16	seed=42
+run	hier_t16_p32_seed42	hierarchical	repetitions=16	seed=42	projection_dimension=32
+run	hier_t16_p64_seed42	hierarchical	repetitions=16	seed=42	projection_dimension=64
+run	hier_t16_p96_seed42	hierarchical	repetitions=16	seed=42	projection_dimension=96
+run	hier_t16_p128_seed42	hierarchical	repetitions=16	seed=42	projection_dimension=128
+run	flat_t16_seed1312	flat	repetitions=16	seed=1312
+run	hier_t16_p32_seed1312	hierarchical	repetitions=16	seed=1312	projection_dimension=32
+run	hier_t16_p64_seed1312	hierarchical	repetitions=16	seed=1312	projection_dimension=64
+run	hier_t16_p96_seed1312	hierarchical	repetitions=16	seed=1312	projection_dimension=96
+run	hier_t16_p128_seed1312	hierarchical	repetitions=16	seed=1312	projection_dimension=128
+run	flat_t16_seed2026	flat	repetitions=16	seed=2026
+run	hier_t16_p32_seed2026	hierarchical	repetitions=16	seed=2026	projection_dimension=32
+run	hier_t16_p64_seed2026	hierarchical	repetitions=16	seed=2026	projection_dimension=64
+run	hier_t16_p96_seed2026	hierarchical	repetitions=16	seed=2026	projection_dimension=96
+run	hier_t16_p128_seed2026	hierarchical	repetitions=16	seed=2026	projection_dimension=128
+
+run	flat_t32_seed7	flat	repetitions=32	seed=7
+run	hier_t32_p32_seed7	hierarchical	repetitions=32	seed=7	projection_dimension=32
+run	hier_t32_p64_seed7	hierarchical	repetitions=32	seed=7	projection_dimension=64
+run	hier_t32_p96_seed7	hierarchical	repetitions=32	seed=7	projection_dimension=96
+run	hier_t32_p128_seed7	hierarchical	repetitions=32	seed=7	projection_dimension=128
+run	flat_t32_seed20	flat	repetitions=32	seed=20
+run	hier_t32_p32_seed20	hierarchical	repetitions=32	seed=20	projection_dimension=32
+run	hier_t32_p64_seed20	hierarchical	repetitions=32	seed=20	projection_dimension=64
+run	hier_t32_p96_seed20	hierarchical	repetitions=32	seed=20	projection_dimension=96
+run	hier_t32_p128_seed20	hierarchical	repetitions=32	seed=20	projection_dimension=128
+run	flat_t32_seed42	flat	repetitions=32	seed=42
+run	hier_t32_p32_seed42	hierarchical	repetitions=32	seed=42	projection_dimension=32
+run	hier_t32_p64_seed42	hierarchical	repetitions=32	seed=42	projection_dimension=64
+run	hier_t32_p96_seed42	hierarchical	repetitions=32	seed=42	projection_dimension=96
+run	hier_t32_p128_seed42	hierarchical	repetitions=32	seed=42	projection_dimension=128
+run	flat_t32_seed1312	flat	repetitions=32	seed=1312
+run	hier_t32_p32_seed1312	hierarchical	repetitions=32	seed=1312	projection_dimension=32
+run	hier_t32_p64_seed1312	hierarchical	repetitions=32	seed=1312	projection_dimension=64
+run	hier_t32_p96_seed1312	hierarchical	repetitions=32	seed=1312	projection_dimension=96
+run	hier_t32_p128_seed1312	hierarchical	repetitions=32	seed=1312	projection_dimension=128
+run	flat_t32_seed2026	flat	repetitions=32	seed=2026
+run	hier_t32_p32_seed2026	hierarchical	repetitions=32	seed=2026	projection_dimension=32
+run	hier_t32_p64_seed2026	hierarchical	repetitions=32	seed=2026	projection_dimension=64
+run	hier_t32_p96_seed2026	hierarchical	repetitions=32	seed=2026	projection_dimension=96
+run	hier_t32_p128_seed2026	hierarchical	repetitions=32	seed=2026	projection_dimension=128
+
+run	flat_t128_seed7	flat	repetitions=128	seed=7
+run	flat_t128_seed20	flat	repetitions=128	seed=20
+run	flat_t128_seed42	flat	repetitions=128	seed=42
+run	flat_t128_seed1312	flat	repetitions=128	seed=1312
+run	flat_t128_seed2026	flat	repetitions=128	seed=2026
+
+run	flat_t1024_seed7	flat	repetitions=1024	seed=7
+run	flat_t1024_seed20	flat	repetitions=1024	seed=20
+run	flat_t1024_seed42	flat	repetitions=1024	seed=42
+run	flat_t1024_seed1312	flat	repetitions=1024	seed=1312
+run	flat_t1024_seed2026	flat	repetitions=1024	seed=2026

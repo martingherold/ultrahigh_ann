@@ -1,5 +1,6 @@
 # CMake and build outputs
 /build/
+/build-*/
 /cmake-build-*/
 CMakeUserPresets.json
 compile_commands.json
@@ -9,6 +10,11 @@ compile_commands.json
 !/results/raw/.gitkeep
 /results/plots/*
 !/results/plots/.gitkeep
+
+# Superseded experiment grids retained locally for provenance
+/experiments/**/*.tsv.archive
+/tests/**/*.py.archive
+/experiments/tcga_pancancer/cuda/cuda_frontier_8h_checkpoints/
 
 # Python
 __pycache__/

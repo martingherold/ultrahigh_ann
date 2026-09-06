@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Integration tests for scripts/transform_coil100.py."""
+"""Integration tests for scripts/data/transform_coil100.py."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ import numpy as np
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-TRANSFORM_SCRIPT = PROJECT_ROOT / "scripts" / "transform_coil100.py"
+TRANSFORM_SCRIPT = PROJECT_ROOT / "scripts" / "data" / "transform_coil100.py"
 
 
 def write_ppm(
@@ -115,13 +115,28 @@ class TransformCoil100Test(unittest.TestCase):
                 allow_pickle=False,
             )
             queries = np.load(output / "queries.npy", allow_pickle=False)
+            representative_labels = np.load(
+                output / "representative_labels.npy",
+                allow_pickle=False,
+            )
             labels = np.load(output / "query_labels.npy", allow_pickle=False)
             self.assertEqual(representatives.shape, (2, 6))
             self.assertEqual(queries.shape, (4, 6))
+            self.assertEqual(representative_labels.shape, (2,))
             self.assertEqual(labels.shape, (4,))
             self.assertEqual(representatives.dtype, np.dtype("<f4"))
             self.assertEqual(queries.dtype, np.dtype("<f4"))
+            self.assertEqual(representative_labels.dtype, np.dtype("<u2"))
             self.assertEqual(labels.dtype, np.dtype("<u2"))
+            np.testing.assert_array_equal(
+                representative_labels,
+                np.asarray((0, 1), dtype=np.dtype("<u2")),
+            )
+            self.assertTrue(
+                set(int(label) for label in np.unique(labels)).issubset(
+                    set(int(label) for label in representative_labels)
+                )
+            )
             self.assertTrue(representatives.flags.c_contiguous)
             self.assertTrue(queries.flags.c_contiguous)
             self.assertFalse((output / "representative_pool.npy").exists())
@@ -164,6 +179,14 @@ class TransformCoil100Test(unittest.TestCase):
             self.assertEqual(
                 metadata["matrices"]["representatives"]["shape"],
                 [2, 6],
+            )
+            self.assertEqual(
+                metadata["labels"]["representative_file"],
+                "representative_labels.npy",
+            )
+            self.assertIn(
+                "representative_labels.npy",
+                metadata["generated_files"],
             )
             self.assertEqual(
                 json.loads(

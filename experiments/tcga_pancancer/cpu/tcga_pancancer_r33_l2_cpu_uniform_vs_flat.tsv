@@ -1,0 +1,145 @@
+# CPU L2 comparison on the 33 TCGA subtype representatives.
+# Mass-matched uniform sampling versus data-dependent importance sampling.
+# Exact L2 search and S(C) are computed once; neither method uses JL projection.
+ultrahigh_ann_benchmark_setup_v2
+dataset	../../../data/processed/tcga_pancancer_v1
+json_output	../../../results/raw/tcga_pancancer_r33_l2_cpu_uniform_vs_flat.json
+csv_output	../../../results/raw/tcga_pancancer_r33_l2_cpu_uniform_vs_flat.csv
+reference	exact
+diagnostics	full_distance_table
+distance	l2
+max_queries	0
+
+run	exact	exact
+
+run	flat_t1_seed7	flat	repetitions=1	seed=7
+run	uniform_t1_seed7	uniform	repetitions=1	seed=7
+run	flat_t1_seed20	flat	repetitions=1	seed=20
+run	uniform_t1_seed20	uniform	repetitions=1	seed=20
+run	flat_t1_seed42	flat	repetitions=1	seed=42
+run	uniform_t1_seed42	uniform	repetitions=1	seed=42
+run	flat_t1_seed1312	flat	repetitions=1	seed=1312
+run	uniform_t1_seed1312	uniform	repetitions=1	seed=1312
+run	flat_t1_seed2026	flat	repetitions=1	seed=2026
+run	uniform_t1_seed2026	uniform	repetitions=1	seed=2026
+
+run	flat_t2_seed7	flat	repetitions=2	seed=7
+run	uniform_t2_seed7	uniform	repetitions=2	seed=7
+run	flat_t2_seed20	flat	repetitions=2	seed=20
+run	uniform_t2_seed20	uniform	repetitions=2	seed=20
+run	flat_t2_seed42	flat	repetitions=2	seed=42
+run	uniform_t2_seed42	uniform	repetitions=2	seed=42
+run	flat_t2_seed1312	flat	repetitions=2	seed=1312
+run	uniform_t2_seed1312	uniform	repetitions=2	seed=1312
+run	flat_t2_seed2026	flat	repetitions=2	seed=2026
+run	uniform_t2_seed2026	uniform	repetitions=2	seed=2026
+
+run	flat_t4_seed7	flat	repetitions=4	seed=7
+run	uniform_t4_seed7	uniform	repetitions=4	seed=7
+run	flat_t4_seed20	flat	repetitions=4	seed=20
+run	uniform_t4_seed20	uniform	repetitions=4	seed=20
+run	flat_t4_seed42	flat	repetitions=4	seed=42
+run	uniform_t4_seed42	uniform	repetitions=4	seed=42
+run	flat_t4_seed1312	flat	repetitions=4	seed=1312
+run	uniform_t4_seed1312	uniform	repetitions=4	seed=1312
+run	flat_t4_seed2026	flat	repetitions=4	seed=2026
+run	uniform_t4_seed2026	uniform	repetitions=4	seed=2026
+
+run	flat_t8_seed7	flat	repetitions=8	seed=7
+run	uniform_t8_seed7	uniform	repetitions=8	seed=7
+run	flat_t8_seed20	flat	repetitions=8	seed=20
+run	uniform_t8_seed20	uniform	repetitions=8	seed=20
+run	flat_t8_seed42	flat	repetitions=8	seed=42
+run	uniform_t8_seed42	uniform	repetitions=8	seed=42
+run	flat_t8_seed1312	flat	repetitions=8	seed=1312
+run	uniform_t8_seed1312	uniform	repetitions=8	seed=1312
+run	flat_t8_seed2026	flat	repetitions=8	seed=2026
+run	uniform_t8_seed2026	uniform	repetitions=8	seed=2026
+
+run	flat_t16_seed7	flat	repetitions=16	seed=7
+run	uniform_t16_seed7	uniform	repetitions=16	seed=7
+run	flat_t16_seed20	flat	repetitions=16	seed=20
+run	uniform_t16_seed20	uniform	repetitions=16	seed=20
+run	flat_t16_seed42	flat	repetitions=16	seed=42
+run	uniform_t16_seed42	uniform	repetitions=16	seed=42
+run	flat_t16_seed1312	flat	repetitions=16	seed=1312
+run	uniform_t16_seed1312	uniform	repetitions=16	seed=1312
+run	flat_t16_seed2026	flat	repetitions=16	seed=2026
+run	uniform_t16_seed2026	uniform	repetitions=16	seed=2026
+
+run	flat_t32_seed7	flat	repetitions=32	seed=7
+run	uniform_t32_seed7	uniform	repetitions=32	seed=7
+run	flat_t32_seed20	flat	repetitions=32	seed=20
+run	uniform_t32_seed20	uniform	repetitions=32	seed=20
+run	flat_t32_seed42	flat	repetitions=32	seed=42
+run	uniform_t32_seed42	uniform	repetitions=32	seed=42
+run	flat_t32_seed1312	flat	repetitions=32	seed=1312
+run	uniform_t32_seed1312	uniform	repetitions=32	seed=1312
+run	flat_t32_seed2026	flat	repetitions=32	seed=2026
+run	uniform_t32_seed2026	uniform	repetitions=32	seed=2026
+
+run	flat_t64_seed7	flat	repetitions=64	seed=7
+run	uniform_t64_seed7	uniform	repetitions=64	seed=7
+run	flat_t64_seed20	flat	repetitions=64	seed=20
+run	uniform_t64_seed20	uniform	repetitions=64	seed=20
+run	flat_t64_seed42	flat	repetitions=64	seed=42
+run	uniform_t64_seed42	uniform	repetitions=64	seed=42
+run	flat_t64_seed1312	flat	repetitions=64	seed=1312
+run	uniform_t64_seed1312	uniform	repetitions=64	seed=1312
+run	flat_t64_seed2026	flat	repetitions=64	seed=2026
+run	uniform_t64_seed2026	uniform	repetitions=64	seed=2026
+
+run	flat_t128_seed7	flat	repetitions=128	seed=7
+run	uniform_t128_seed7	uniform	repetitions=128	seed=7
+run	flat_t128_seed20	flat	repetitions=128	seed=20
+run	uniform_t128_seed20	uniform	repetitions=128	seed=20
+run	flat_t128_seed42	flat	repetitions=128	seed=42
+run	uniform_t128_seed42	uniform	repetitions=128	seed=42
+run	flat_t128_seed1312	flat	repetitions=128	seed=1312
+run	uniform_t128_seed1312	uniform	repetitions=128	seed=1312
+run	flat_t128_seed2026	flat	repetitions=128	seed=2026
+run	uniform_t128_seed2026	uniform	repetitions=128	seed=2026
+
+run	flat_t256_seed7	flat	repetitions=256	seed=7
+run	uniform_t256_seed7	uniform	repetitions=256	seed=7
+run	flat_t256_seed20	flat	repetitions=256	seed=20
+run	uniform_t256_seed20	uniform	repetitions=256	seed=20
+run	flat_t256_seed42	flat	repetitions=256	seed=42
+run	uniform_t256_seed42	uniform	repetitions=256	seed=42
+run	flat_t256_seed1312	flat	repetitions=256	seed=1312
+run	uniform_t256_seed1312	uniform	repetitions=256	seed=1312
+run	flat_t256_seed2026	flat	repetitions=256	seed=2026
+run	uniform_t256_seed2026	uniform	repetitions=256	seed=2026
+
+run	flat_t512_seed7	flat	repetitions=512	seed=7
+run	uniform_t512_seed7	uniform	repetitions=512	seed=7
+run	flat_t512_seed20	flat	repetitions=512	seed=20
+run	uniform_t512_seed20	uniform	repetitions=512	seed=20
+run	flat_t512_seed42	flat	repetitions=512	seed=42
+run	uniform_t512_seed42	uniform	repetitions=512	seed=42
+run	flat_t512_seed1312	flat	repetitions=512	seed=1312
+run	uniform_t512_seed1312	uniform	repetitions=512	seed=1312
+run	flat_t512_seed2026	flat	repetitions=512	seed=2026
+run	uniform_t512_seed2026	uniform	repetitions=512	seed=2026
+
+run	flat_t1024_seed7	flat	repetitions=1024	seed=7
+run	uniform_t1024_seed7	uniform	repetitions=1024	seed=7
+run	flat_t1024_seed20	flat	repetitions=1024	seed=20
+run	uniform_t1024_seed20	uniform	repetitions=1024	seed=20
+run	flat_t1024_seed42	flat	repetitions=1024	seed=42
+run	uniform_t1024_seed42	uniform	repetitions=1024	seed=42
+run	flat_t1024_seed1312	flat	repetitions=1024	seed=1312
+run	uniform_t1024_seed1312	uniform	repetitions=1024	seed=1312
+run	flat_t1024_seed2026	flat	repetitions=1024	seed=2026
+run	uniform_t1024_seed2026	uniform	repetitions=1024	seed=2026
+
+run	flat_t2048_seed7	flat	repetitions=2048	seed=7
+run	uniform_t2048_seed7	uniform	repetitions=2048	seed=7
+run	flat_t2048_seed20	flat	repetitions=2048	seed=20
+run	uniform_t2048_seed20	uniform	repetitions=2048	seed=20
+run	flat_t2048_seed42	flat	repetitions=2048	seed=42
+run	uniform_t2048_seed42	uniform	repetitions=2048	seed=42
+run	flat_t2048_seed1312	flat	repetitions=2048	seed=1312
+run	uniform_t2048_seed1312	uniform	repetitions=2048	seed=1312
+run	flat_t2048_seed2026	flat	repetitions=2048	seed=2026
+run	uniform_t2048_seed2026	uniform	repetitions=2048	seed=2026

@@ -11,6 +11,10 @@
 !/raw/20newsgroups/.gitkeep
 /raw/coil100/*
 !/raw/coil100/.gitkeep
+/raw/gse2034/*
+!/raw/gse2034/.gitkeep
+/raw/golub/*
+!/raw/golub/.gitkeep
 
 # Derived and generated data
 /processed/*
@@ -18,4 +22,5 @@
 /synthetic/*
 !/synthetic/.gitkeep
 
-# Split definitions in splits/ remain version-controlled.
+# Reproducible split guidance and any deliberately curated definitions in
+# splits/ remain version-controlled.

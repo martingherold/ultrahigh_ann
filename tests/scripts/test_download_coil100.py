@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for scripts/download_coil100.py without network access."""
+"""Tests for scripts/data/download_coil100.py without network access."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = PROJECT_ROOT / "scripts" / "download_coil100.py"
+SCRIPT = PROJECT_ROOT / "scripts" / "data" / "download_coil100.py"
 SPEC = importlib.util.spec_from_file_location("download_coil100", SCRIPT)
 if SPEC is None or SPEC.loader is None:
     raise RuntimeError(f"cannot load {SCRIPT}")
