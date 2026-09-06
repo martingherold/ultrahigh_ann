@@ -118,7 +118,7 @@ ExactDistanceTable::ExactDistanceTable(
 {
     if (representative_count_ == 0) {
         throw std::invalid_argument(
-            "distance diagnostics expect at least one representative");
+            "distance diagnostics expect at least one reference vector");
     }
     if (query_count == 0 || query_count > queries.rows()) {
         throw std::invalid_argument(
@@ -126,7 +126,7 @@ ExactDistanceTable::ExactDistanceTable(
     }
     if (representatives.cols() != queries.cols()) {
         throw std::invalid_argument(
-            "representative and query dimensions differ");
+            "reference-vector and query dimensions differ");
     }
     if (query_count > distances_.max_size() / representative_count_) {
         throw std::length_error("exact distance table dimensions overflow");
@@ -227,7 +227,7 @@ ApproximationMetrics ExactDistanceTable::evaluate(
         const std::size_t prediction = predictions[query_index];
         if (prediction >= representative_count_) {
             throw std::invalid_argument(
-                "prediction contains an out-of-range representative row");
+                "prediction contains an out-of-range reference-vector row");
         }
         const auto row = std::span<const double>{distances_}.subspan(
             query_index * representative_count_,

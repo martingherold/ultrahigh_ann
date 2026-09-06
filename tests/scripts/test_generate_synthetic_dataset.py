@@ -29,7 +29,7 @@ class GenerateSyntheticDatasetTest(unittest.TestCase):
                 str(SCRIPT),
                 "--output-dir",
                 str(output),
-                "--representatives",
+                "--reference-vectors",
                 "6",
                 "--queries",
                 "24",
@@ -60,31 +60,31 @@ class GenerateSyntheticDatasetTest(unittest.TestCase):
             self.assertEqual(first_result.returncode, 0, first_result.stderr)
             self.assertEqual(second_result.returncode, 0, second_result.stderr)
 
-            representatives = np.load(
-                first / "representatives.npy", allow_pickle=False
+            reference_vectors = np.load(
+                first / "reference_vectors.npy", allow_pickle=False
             )
-            representative_labels = np.load(
-                first / "representative_labels.npy", allow_pickle=False
+            reference_labels = np.load(
+                first / "reference_labels.npy", allow_pickle=False
             )
             queries = np.load(first / "queries.npy", allow_pickle=False)
             query_labels = np.load(
                 first / "query_labels.npy", allow_pickle=False
             )
-            self.assertEqual(representatives.shape, (6, 96))
+            self.assertEqual(reference_vectors.shape, (6, 96))
             self.assertEqual(queries.shape, (24, 96))
-            self.assertEqual(representatives.dtype, np.dtype("<f4"))
+            self.assertEqual(reference_vectors.dtype, np.dtype("<f4"))
             self.assertEqual(queries.dtype, np.dtype("<f4"))
-            self.assertEqual(representative_labels.dtype, np.dtype("<u2"))
+            self.assertEqual(reference_labels.dtype, np.dtype("<u2"))
             self.assertEqual(query_labels.dtype, np.dtype("<u2"))
             np.testing.assert_array_equal(
-                representative_labels,
+                reference_labels,
                 np.arange(6, dtype="<u2"),
             )
 
             squared_distances = np.sum(
                 (
                     queries.astype(np.float64)[:, None, :]
-                    - representatives.astype(np.float64)[None, :, :]
+                    - reference_vectors.astype(np.float64)[None, :, :]
                 )
                 ** 2,
                 axis=2,
@@ -94,8 +94,8 @@ class GenerateSyntheticDatasetTest(unittest.TestCase):
                 query_labels,
             )
             for name in (
-                "representatives.npy",
-                "representative_labels.npy",
+                "reference_vectors.npy",
+                "reference_labels.npy",
                 "queries.npy",
                 "query_labels.npy",
             ):
@@ -108,7 +108,7 @@ class GenerateSyntheticDatasetTest(unittest.TestCase):
                 (first / "dataset.json").read_text(encoding="utf-8")
             )
             self.assertEqual(metadata["distance"], "l2")
-            self.assertEqual(metadata["representatives"]["shape"], [6, 96])
+            self.assertEqual(metadata["reference_vectors"]["shape"], [6, 96])
             self.assertEqual(metadata["queries"]["shape"], [24, 96])
             self.assertEqual(metadata["queries"]["exact_target_agreement"], 1.0)
             self.assertEqual(

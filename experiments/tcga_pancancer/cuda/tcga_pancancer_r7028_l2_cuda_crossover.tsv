@@ -1,14 +1,14 @@
 # Reviewer-runnable CUDA L2 crossover demonstration on 7,028 TCGA
-# training representatives and all 3,013 held-back queries.
+# training vectors and all 3,013 held-out queries.
 #
 # This compact, deterministic setup tests the scoped observation that the
-# hierarchy can improve the direct-scan latency/fidelity frontier at lower
-# accuracy, while flat search takes over at higher accuracy. GEMM counterparts
+# hierarchy can reduce direct-scan latency at larger mean relative distance
+# excess, while flat search takes over at smaller excess. GEMM counterparts
 # remain present to show that the observation is strategy-dependent.
 #
 # Flat follows T={1,2,4,8,16,32,48,64}. T=48 brackets the observed
-# high-accuracy crossover between the powers-of-two controls.
-# Hierarchy follows a predeclared staircase from low to high fidelity:
+# crossover at smaller distance excess between the powers-of-two controls.
+# Hierarchy follows a predeclared staircase from larger to smaller distance excess:
 # (T,p)={(4,32),(4,128),(16,128),(16,512),(64,512),(128,1536)}.
 # All approximate runs use seed=42, one warmup, three timed trials, and B=128.
 # The fixed seed makes this a reproducible demonstration, not a sampling-
@@ -24,8 +24,8 @@
 # full distance table.
 ultrahigh_ann_benchmark_setup_v2
 dataset	../../../data/processed/tcga_pancancer_v1
-representatives_file	representative_pool.npy
-representative_labels_file	representative_pool_labels.npy
+reference_vectors_file	training_pool.npy
+reference_labels_file	training_pool_labels.npy
 queries_file	queries.npy
 query_labels_file	query_labels.npy
 probabilities	../../../data/processed/tcga_pancancer_v1/l2_probabilities_7028_gpu_fp32.uap

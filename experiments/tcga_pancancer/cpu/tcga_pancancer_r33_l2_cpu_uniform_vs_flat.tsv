@@ -1,4 +1,4 @@
-# CPU L2 comparison on the 33 TCGA subtype representatives.
+# CPU L2 comparison on the 33 TCGA class centroids.
 # Mass-matched uniform sampling versus data-dependent importance sampling.
 # Exact L2 search and S(C) are computed once; neither method uses JL projection.
 ultrahigh_ann_benchmark_setup_v2

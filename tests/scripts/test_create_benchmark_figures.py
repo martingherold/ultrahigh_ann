@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for schema-version 5 benchmark figure generation."""
+"""Tests for schema-version 6 benchmark figure generation."""
 
 from __future__ import annotations
 
@@ -10,6 +10,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+from test_benchmark_schema import valid_provenance_report
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -55,7 +57,7 @@ def approximation(agreement: float) -> dict[str, object]:
             }
             for (lower, upper), rate in zip(bounds, margin_rates)
         ],
-        "returned_representative_rank": None,
+        "returned_neighbor_rank": None,
         "approximation_guarantee_failures": [
             {
                 "epsilon": epsilon,
@@ -111,8 +113,8 @@ def run(
                 "median_ms": query_microseconds / 100.0,
                 "median_microseconds_per_query": query_microseconds,
                 "median_queries_per_second": 1_000_000 / query_microseconds,
-                "exact_choice_agreement_count": round(agreement * 10),
-                "exact_choice_agreement": agreement,
+                "exact_neighbor_agreement_count": round(agreement * 10),
+                "exact_neighbor_agreement": agreement,
                 "correct": round((agreement - 0.05) * 10),
                 "accuracy": agreement - 0.05,
                 "label_agreement_with_exact": agreement,
@@ -150,8 +152,8 @@ def exact_run() -> dict[str, object]:
                 "median_ms": 10.0,
                 "median_microseconds_per_query": 1000.0,
                 "median_queries_per_second": 1000.0,
-                "exact_choice_agreement_count": 10,
-                "exact_choice_agreement": 1.0,
+                "exact_neighbor_agreement_count": 10,
+                "exact_neighbor_agreement": 1.0,
                 "correct": 9,
                 "accuracy": 0.9,
                 "label_agreement_with_exact": 1.0,
@@ -169,11 +171,15 @@ def fixture_report() -> dict[str, object]:
         (1.10, 1.25),
         (1.25, None),
     )
+    provenance_report = valid_provenance_report()
     return {
-        "schema_version": 5,
+        "schema_version": 6,
+        "provenance": provenance_report["provenance"],
+        "sampling_probabilities": provenance_report["sampling_probabilities"],
         "dataset": {
+            **provenance_report["dataset"],
             "directory": "/tmp/fixture_dataset",
-            "representative_count": 33,
+            "reference_vector_count": 33,
             "query_count_available": 10,
             "query_count_run": 10,
             "dimension": 100,
@@ -247,7 +253,7 @@ class CreateBenchmarkFiguresTest(unittest.TestCase):
             expected = (
                 "report_margin_error.png",
                 "report_approximation_failures.png",
-                "report_latency_fidelity_pareto.png",
+                "report_latency_agreement_pareto.png",
             )
             for filename in expected:
                 figure = output / filename
@@ -259,7 +265,7 @@ class CreateBenchmarkFiguresTest(unittest.TestCase):
             root = Path(temporary_directory)
             report = root / "report.json"
             report.write_text(
-                json.dumps({"schema_version": 4}),
+                json.dumps({"schema_version": 5}),
                 encoding="utf-8",
             )
             environment = dict(os.environ)
@@ -279,7 +285,7 @@ class CreateBenchmarkFiguresTest(unittest.TestCase):
                 env=environment,
             )
             self.assertNotEqual(completed.returncode, 0)
-            self.assertIn("schema-version 5", completed.stderr)
+            self.assertIn("schema-version 6", completed.stderr)
 
     def test_creates_latency_distance_excess_figure(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create publication-oriented figures from a schema-version 5 report."""
+"""Create publication-oriented figures from a schema-version 6 report."""
 
 from __future__ import annotations
 
@@ -130,7 +130,7 @@ class ReportData:
     report_path: Path
     dataset_name: str
     distance: str
-    representative_count: int
+    reference_vector_count: int
     dimension: int
     exact_query_microseconds: float
     exact_accuracy: float
@@ -144,9 +144,9 @@ class ReportData:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Create margin-error, approximation-failure, latency/fidelity, "
-            "and latency/distance figures from a schema-version 5 benchmark "
-            "report."
+            "Create figures for query margins, approximation failures, "
+            "agreement with exact search, and relative distance excess "
+            "from a schema-version 6 benchmark report."
         )
     )
     parser.add_argument(
@@ -351,7 +351,7 @@ def parse_observation(raw_run: object, raw_measurement: object) -> Observation:
             strategy=str(run.get("strategy")),
         ),
         query_microseconds=require_number(measurement, "median_microseconds_per_query"),
-        exact_agreement=require_number(measurement, "exact_choice_agreement"),
+        exact_agreement=require_number(measurement, "exact_neighbor_agreement"),
         accuracy=require_number(measurement, "accuracy"),
         margin_error_rates=margin_rates,
         approximation_epsilons=epsilons,
@@ -424,13 +424,9 @@ def load_report(path: Path, requested_batch_size: int | None = None) -> ReportDa
             root = require_mapping(json.load(source), "report root")
     except (OSError, json.JSONDecodeError) as error:
         raise RuntimeError(f"cannot read report {path}: {error}") from error
-    if root.get("schema_version") != 5:
-        raise RuntimeError("figures require a schema-version 5 report")
-    # The first locally generated schema-5 candidates predate provenance. Keep
-    # them readable until the release artifacts are regenerated, while making
-    # every report that claims provenance satisfy the complete contract.
-    if "provenance" in root:
-        validate_report_provenance(root)
+    if root.get("schema_version") != 6:
+        raise RuntimeError("figures require a schema-version 6 report")
+    validate_report_provenance(root)
 
     dataset = require_mapping(root.get("dataset"), "dataset")
     settings = require_mapping(root.get("settings"), "settings")
@@ -546,7 +542,7 @@ def load_report(path: Path, requested_batch_size: int | None = None) -> ReportDa
         report_path=path,
         dataset_name=directory.name or "dataset",
         distance=str(distance),
-        representative_count=require_integer(dataset, "representative_count"),
+        reference_vector_count=require_integer(dataset, "reference_vector_count"),
         dimension=require_integer(dataset, "dimension"),
         exact_query_microseconds=require_number(
             exact_measurement,
@@ -714,7 +710,7 @@ def report_subtitle(report: ReportData) -> str:
     dataset_label = report.dataset_name.replace("_", " ")
     subtitle = (
         f"{dataset_label}, {report.distance.upper()}, "
-        f"r={report.representative_count}, d={report.dimension:,}"
+        f"r={report.reference_vector_count}, d={report.dimension:,}"
     )
     if report.exact_batch_size != report.batch_size:
         subtitle += (
@@ -826,15 +822,15 @@ def pareto_frontier(
     points: list[tuple[float, float]],
 ) -> list[tuple[float, float]]:
     frontier: list[tuple[float, float]] = []
-    best_fidelity = -math.inf
-    for latency, fidelity in sorted(points):
-        if fidelity > best_fidelity:
-            frontier.append((latency, fidelity))
-            best_fidelity = fidelity
+    best_agreement = -math.inf
+    for latency, agreement in sorted(points):
+        if agreement > best_agreement:
+            frontier.append((latency, agreement))
+            best_agreement = agreement
     return frontier
 
 
-def plot_latency_fidelity_pareto(
+def plot_latency_agreement_pareto(
     report: ReportData,
     compact: bool = False,
 ):
@@ -1142,12 +1138,14 @@ def plot_latency_fidelity_pareto(
         axis.set_xscale("log")
     latency_scale = ", log scale" if logarithmic_latency else ""
     axis.set_xlabel(f"Query latency (µs/query{latency_scale})")
-    axis.set_ylabel("Agreement with exact representative (%)")
+    axis.set_ylabel("Agreement with exact search (%)")
     axis.set_ylim(
         max(0.0, min(point[1] for point in all_points) - 4.0),
         101.5,
     )
-    axis.set_title(f"Latency–fidelity trade-off\n{report_subtitle(report)}")
+    axis.set_title(
+        f"Query latency versus agreement with exact search\n{report_subtitle(report)}"
+    )
     axis.legend(loc="lower right", frameon=True, ncol=2)
     figure.tight_layout()
     return figure
@@ -1532,9 +1530,9 @@ def main() -> int:
         if "pareto" in args.figures:
             written.extend(
                 save_figure(
-                    plot_latency_fidelity_pareto(report, args.compact),
+                    plot_latency_agreement_pareto(report, args.compact),
                     output_directory,
-                    f"{prefix}_latency_fidelity_pareto",
+                    f"{prefix}_latency_agreement_pareto",
                     args.formats,
                     args.dpi,
                 )

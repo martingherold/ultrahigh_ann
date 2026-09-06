@@ -1,4 +1,4 @@
-# CPU L2 sweep on the 33 TCGA subtype representatives.
+# CPU L2 sweep on the 33 TCGA class centroids.
 # Paths are resolved relative to this setup file.
 # Exact L2 search is configured explicitly and runs once before all approximate configurations.
 # Five seeds are retained for statistical summaries.

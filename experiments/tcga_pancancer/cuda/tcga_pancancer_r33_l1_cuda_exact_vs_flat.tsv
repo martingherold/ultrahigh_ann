@@ -1,4 +1,4 @@
-# CUDA L1 comparison on the 33 TCGA subtype representatives.
+# CUDA L1 comparison on the 33 TCGA class centroids.
 # The binary64 CPU exact run remains the reference so that binary32 CUDA
 # accumulation differences are visible instead of being folded into quality.
 ultrahigh_ann_benchmark_setup_v2

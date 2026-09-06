@@ -137,18 +137,18 @@ class TransformTcgaTest(unittest.TestCase):
             )
 
             matrices = {
-                "representative_pool": np.load(
-                    output / "representative_pool.npy", allow_pickle=False
+                "training_pool": np.load(
+                    output / "training_pool.npy", allow_pickle=False
                 ),
                 "query": np.load(output / "queries.npy", allow_pickle=False),
             }
             labels = {
                 "representative": np.load(
-                    output / "representative_labels.npy",
+                    output / "reference_labels.npy",
                     allow_pickle=False,
                 ),
-                "representative_pool": np.load(
-                    output / "representative_pool_labels.npy",
+                "training_pool": np.load(
+                    output / "training_pool_labels.npy",
                     allow_pickle=False,
                 ),
                 "query": np.load(
@@ -187,18 +187,18 @@ class TransformTcgaTest(unittest.TestCase):
             self.assertEqual(len(bb_samples), 2)
             self.assertEqual(bb_samples[0]["role"], bb_samples[1]["role"])
 
-            representatives = np.load(
-                output / "representatives.npy", allow_pickle=False
+            reference_vectors = np.load(
+                output / "reference_vectors.npy", allow_pickle=False
             )
             for label in range(3):
                 pool_vectors = [
                     expected_vectors[sample["sample_id"]]
                     for sample in samples
-                    if sample["role"] == "representative_pool"
+                    if sample["role"] == "training_pool"
                     and int(sample["label"]) == label
                 ]
                 np.testing.assert_array_equal(
-                    representatives[label],
+                    reference_vectors[label],
                     np.mean(np.asarray(pool_vectors), axis=0),
                 )
 
@@ -215,18 +215,18 @@ class TransformTcgaTest(unittest.TestCase):
                 (output / "dataset.json").read_text(encoding="utf-8")
             )
             self.assertEqual(
-                metadata["matrices"]["representatives"]["shape"], [3, 3]
+                metadata["matrices"]["reference_vectors"]["shape"], [3, 3]
             )
             self.assertEqual(
                 metadata["matrices"]["queries"]["shape"][0],
                 len(matrices["query"]),
             )
             self.assertEqual(
-                metadata["labels"]["representative_file"],
-                "representative_labels.npy",
+                metadata["labels"]["reference_file"],
+                "reference_labels.npy",
             )
             self.assertIn(
-                "representative_labels.npy",
+                "reference_labels.npy",
                 metadata["generated_files"],
             )
             self.assertEqual(

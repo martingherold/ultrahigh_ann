@@ -26,7 +26,7 @@ from benchmark_reporting import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_BENCHMARK = PROJECT_ROOT / "build" / "nearest_representative_benchmark"
+DEFAULT_BENCHMARK = PROJECT_ROOT / "build" / "nearest_neighbor_benchmark"
 
 
 def parse_args() -> argparse.Namespace:

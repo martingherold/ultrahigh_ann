@@ -122,7 +122,7 @@ int main()
         1.0F, 2.0F, 3.0F,
         4.0F, 5.0F, 6.0F};
     write_npy<float>(
-        directory.path() / "representatives.npy",
+        directory.path() / "reference_vectors.npy",
         "<f4",
         representative_shape,
         representatives);
@@ -183,7 +183,7 @@ int main()
     const std::array<std::uint16_t, 2> representative_labels{4, 7};
     const std::array<std::size_t, 1> representative_label_shape{2};
     write_npy<std::uint16_t>(
-        directory.path() / "representative_labels.npy",
+        directory.path() / "reference_labels.npy",
         "<u2",
         representative_label_shape,
         representative_labels);
@@ -230,7 +230,7 @@ int main()
     const std::array<std::uint16_t, 1> short_representative_labels{4};
     const std::array<std::size_t, 1> short_representative_label_shape{1};
     write_npy<std::uint16_t>(
-        directory.path() / "representative_labels.npy",
+        directory.path() / "reference_labels.npy",
         "<u2",
         short_representative_label_shape,
         short_representative_labels);

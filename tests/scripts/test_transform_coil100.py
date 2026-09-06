@@ -110,40 +110,40 @@ class TransformCoil100Test(unittest.TestCase):
             result = self.run_transform(raw, output)
             self.assertEqual(result.returncode, 0, result.stderr)
 
-            representatives = np.load(
-                output / "representatives.npy",
+            reference_vectors = np.load(
+                output / "reference_vectors.npy",
                 allow_pickle=False,
             )
             queries = np.load(output / "queries.npy", allow_pickle=False)
-            representative_labels = np.load(
-                output / "representative_labels.npy",
+            reference_labels = np.load(
+                output / "reference_labels.npy",
                 allow_pickle=False,
             )
             labels = np.load(output / "query_labels.npy", allow_pickle=False)
-            self.assertEqual(representatives.shape, (2, 6))
+            self.assertEqual(reference_vectors.shape, (2, 6))
             self.assertEqual(queries.shape, (4, 6))
-            self.assertEqual(representative_labels.shape, (2,))
+            self.assertEqual(reference_labels.shape, (2,))
             self.assertEqual(labels.shape, (4,))
-            self.assertEqual(representatives.dtype, np.dtype("<f4"))
+            self.assertEqual(reference_vectors.dtype, np.dtype("<f4"))
             self.assertEqual(queries.dtype, np.dtype("<f4"))
-            self.assertEqual(representative_labels.dtype, np.dtype("<u2"))
+            self.assertEqual(reference_labels.dtype, np.dtype("<u2"))
             self.assertEqual(labels.dtype, np.dtype("<u2"))
             np.testing.assert_array_equal(
-                representative_labels,
+                reference_labels,
                 np.asarray((0, 1), dtype=np.dtype("<u2")),
             )
             self.assertTrue(
                 set(int(label) for label in np.unique(labels)).issubset(
-                    set(int(label) for label in representative_labels)
+                    set(int(label) for label in reference_labels)
                 )
             )
-            self.assertTrue(representatives.flags.c_contiguous)
+            self.assertTrue(reference_vectors.flags.c_contiguous)
             self.assertTrue(queries.flags.c_contiguous)
-            self.assertFalse((output / "representative_pool.npy").exists())
+            self.assertFalse((output / "training_pool.npy").exists())
 
             for label, object_id in enumerate((1, 2)):
                 np.testing.assert_allclose(
-                    representatives[label],
+                    reference_vectors[label],
                     (expected[(object_id, 90)] + expected[(object_id, 180)])
                     / 2.0,
                     rtol=0.0,
@@ -177,15 +177,15 @@ class TransformCoil100Test(unittest.TestCase):
                 [270, 0],
             )
             self.assertEqual(
-                metadata["matrices"]["representatives"]["shape"],
+                metadata["matrices"]["reference_vectors"]["shape"],
                 [2, 6],
             )
             self.assertEqual(
-                metadata["labels"]["representative_file"],
-                "representative_labels.npy",
+                metadata["labels"]["reference_file"],
+                "reference_labels.npy",
             )
             self.assertIn(
-                "representative_labels.npy",
+                "reference_labels.npy",
                 metadata["generated_files"],
             )
             self.assertEqual(
@@ -201,7 +201,7 @@ class TransformCoil100Test(unittest.TestCase):
             self.assertNotEqual(second_result.returncode, 0)
             self.assertIn("Refusing to overwrite", second_result.stderr)
 
-    def test_optionally_materializes_representative_pool(self) -> None:
+    def test_optionally_materializes_training_pool(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             raw = root / "raw"
@@ -212,15 +212,15 @@ class TransformCoil100Test(unittest.TestCase):
             result = self.run_transform(
                 raw,
                 output,
-                "--write-representative-pool",
+                "--write-training-pool",
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             pool = np.load(
-                output / "representative_pool.npy",
+                output / "training_pool.npy",
                 allow_pickle=False,
             )
             labels = np.load(
-                output / "representative_pool_labels.npy",
+                output / "training_pool_labels.npy",
                 allow_pickle=False,
             )
             self.assertEqual(pool.shape, (4, 6))

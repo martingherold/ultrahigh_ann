@@ -118,9 +118,51 @@ void test_loads_cpu_and_cuda_runs()
                (temporary.path() / "results/report.json").lexically_normal(),
            "JSON output path resolution changed");
     expect(setup.representatives_path ==
-               (temporary.path() / "../dataset/representatives.npy")
+               (temporary.path() / "../dataset/reference_vectors.npy")
                    .lexically_normal(),
            "dataset file path resolution changed");
+}
+
+void test_reference_vector_configuration()
+{
+    using namespace ultrahigh_ann::benchmark;
+    const TemporaryDirectory temporary;
+    const auto path = temporary.path() / "reference-vectors.tsv";
+    const std::string base =
+        "ultrahigh_ann_benchmark_setup_v2\n"
+        "dataset\tdataset\n"
+        "json_output\treport.json\n"
+        "csv_output\treport.csv\n"
+        "reference\texact\n";
+    write_text(
+        path,
+        base +
+            "reference_vectors_file\tinputs/vectors.npy\n"
+            "reference_labels_file\tinputs/labels.npy\n"
+            "run\texact\texact\tstrategy=parallel_reference_vectors\n");
+    const BenchmarkSetup setup = load_benchmark_setup(path);
+    expect(setup.representatives_path ==
+               temporary.path() / "dataset/inputs/vectors.npy",
+           "reference vector override must resolve from the dataset directory");
+    expect(setup.representative_labels_path ==
+               temporary.path() / "dataset/inputs/labels.npy",
+           "reference label override must resolve from the dataset directory");
+    expect(setup.runs[0].strategy == QueryStrategy::parallel_representatives,
+           "reference-vector strategy must select parallel reference scanning");
+    expect(strategy_name(setup.runs[0].strategy) == "parallel_reference_vectors",
+           "the reported strategy must use the canonical CLI spelling");
+
+    for (const std::string_view old_directive :
+         {"representatives_file", "representative_labels_file"}) {
+        write_text(path, base + std::string(old_directive) +
+                             "\told.npy\nrun\texact\texact\n");
+        expect_failure([&] { static_cast<void>(load_benchmark_setup(path)); },
+                       "unknown directive");
+    }
+    write_text(path, base +
+                         "run\texact\texact\tstrategy=parallel_representatives\n");
+    expect_failure([&] { static_cast<void>(load_benchmark_setup(path)); },
+                   "unknown query strategy");
 }
 
 void test_rejects_invalid_reference_and_backend_strategy()
@@ -323,6 +365,7 @@ void test_loads_cuda_hierarchies()
 int main()
 {
     test_loads_cpu_and_cuda_runs();
+    test_reference_vector_configuration();
     test_rejects_invalid_reference_and_backend_strategy();
     test_rejects_version_one_and_duplicate_outputs();
     test_loads_cublas_probability_policy();

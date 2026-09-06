@@ -24,7 +24,7 @@ class RunSyntheticQuickstartTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("generate_synthetic_dataset.py", result.stdout)
-        self.assertIn("nearest_representative_benchmark", result.stdout)
+        self.assertIn("nearest_neighbor_benchmark", result.stdout)
         self.assertIn("synthetic_quickstart_l2.tsv", result.stdout)
         self.assertIn("create_benchmark_figures.py", result.stdout)
 

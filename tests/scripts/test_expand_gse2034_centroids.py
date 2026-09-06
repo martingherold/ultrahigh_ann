@@ -15,7 +15,7 @@ import numpy as np
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = PROJECT_ROOT / "scripts" / "data" / "expand_gse2034_representatives.py"
+SCRIPT = PROJECT_ROOT / "scripts" / "data" / "expand_gse2034_centroids.py"
 
 
 class ExpandGse2034RepresentativesTest(unittest.TestCase):
@@ -45,9 +45,9 @@ class ExpandGse2034RepresentativesTest(unittest.TestCase):
             dtype="<f4",
         )
         query_labels = np.asarray((0, 1), dtype="<u2")
-        np.save(directory / "representative_pool.npy", pool, allow_pickle=False)
+        np.save(directory / "training_pool.npy", pool, allow_pickle=False)
         np.save(
-            directory / "representative_pool_labels.npy",
+            directory / "training_pool_labels.npy",
             pool_labels,
             allow_pickle=False,
         )
@@ -63,7 +63,7 @@ class ExpandGse2034RepresentativesTest(unittest.TestCase):
             np.ones(4, dtype="<f4"),
             allow_pickle=False,
         )
-        with (directory / "representatives.csv").open(
+        with (directory / "reference_vectors.csv").open(
             "w",
             encoding="utf-8",
             newline="",
@@ -71,7 +71,7 @@ class ExpandGse2034RepresentativesTest(unittest.TestCase):
             writer = csv.DictWriter(
                 output,
                 fieldnames=(
-                    "representative_row",
+                    "reference_vector_row",
                     "label",
                     "outcome",
                     "construction",
@@ -81,7 +81,7 @@ class ExpandGse2034RepresentativesTest(unittest.TestCase):
             writer.writeheader()
             writer.writerow(
                 {
-                    "representative_row": 0,
+                    "reference_vector_row": 0,
                     "label": 0,
                     "outcome": "relapse_free",
                     "construction": "arithmetic_mean_centroid",
@@ -90,7 +90,7 @@ class ExpandGse2034RepresentativesTest(unittest.TestCase):
             )
             writer.writerow(
                 {
-                    "representative_row": 1,
+                    "reference_vector_row": 1,
                     "label": 1,
                     "outcome": "distant_metastasis",
                     "construction": "arithmetic_mean_centroid",
@@ -119,7 +119,7 @@ class ExpandGse2034RepresentativesTest(unittest.TestCase):
                 str(source),
                 "--output-dir",
                 str(output),
-                "--representatives-per-class",
+                "--centroids-per-class",
                 "2",
                 "--clustering-features",
                 "2",
@@ -144,15 +144,15 @@ class ExpandGse2034RepresentativesTest(unittest.TestCase):
             result = self.run_script(source, output)
             self.assertEqual(result.returncode, 0, result.stderr)
 
-            representatives = np.load(
-                output / "representatives.npy",
+            reference_vectors = np.load(
+                output / "reference_vectors.npy",
                 allow_pickle=False,
             )
             labels = np.load(
-                output / "representative_labels.npy",
+                output / "reference_labels.npy",
                 allow_pickle=False,
             )
-            self.assertEqual(representatives.shape, (4, 4))
+            self.assertEqual(reference_vectors.shape, (4, 4))
             np.testing.assert_array_equal(labels, (0, 0, 1, 1))
             expected = {
                 0: np.asarray(
@@ -166,11 +166,11 @@ class ExpandGse2034RepresentativesTest(unittest.TestCase):
                 ),
             }
             for label, expected_centroids in expected.items():
-                actual = representatives[labels == label]
+                actual = reference_vectors[labels == label]
                 actual = actual[np.argsort(actual[:, 0])]
                 np.testing.assert_allclose(actual, expected_centroids)
 
-            with (output / "representatives.csv").open(
+            with (output / "reference_vectors.csv").open(
                 encoding="utf-8",
                 newline="",
             ) as source_file:
@@ -183,14 +183,14 @@ class ExpandGse2034RepresentativesTest(unittest.TestCase):
             metadata = json.loads(
                 (output / "dataset.json").read_text(encoding="utf-8")
             )
-            self.assertEqual(metadata["representatives"]["shape"], [4, 4])
-            self.assertEqual(metadata["representatives"]["count_per_class"], 2)
+            self.assertEqual(metadata["reference_vectors"]["shape"], [4, 4])
+            self.assertEqual(metadata["reference_vectors"]["count_per_class"], 2)
             self.assertIn(
-                "only representative_pool.npy",
+                "only training_pool.npy",
                 metadata["leakage_control"],
             )
             self.assertTrue((output / "source_dataset.json").is_file())
-            self.assertFalse((output / "representative_pool.npy").exists())
+            self.assertFalse((output / "training_pool.npy").exists())
             np.testing.assert_array_equal(
                 np.load(output / "queries.npy", allow_pickle=False),
                 np.load(source / "queries.npy", allow_pickle=False),
@@ -213,7 +213,7 @@ class ExpandGse2034RepresentativesTest(unittest.TestCase):
                     str(source),
                     "--output-dir",
                     str(root / "expanded"),
-                    "--representatives-per-class",
+                    "--centroids-per-class",
                     "5",
                 ),
                 check=False,

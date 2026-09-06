@@ -12,7 +12,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from expand_tcga_pancancer_representatives import (
+from expand_tcga_pancancer_centroids import (
     kmeans,
     load_labels,
     load_matrix,
@@ -24,7 +24,7 @@ try:
     import numpy as np
 except ModuleNotFoundError as error:
     print(
-        "expand_gse2034_representatives.py requires NumPy.",
+        "expand_gse2034_centroids.py requires NumPy.",
         file=sys.stderr,
     )
     raise SystemExit(2) from error
@@ -33,9 +33,9 @@ except ModuleNotFoundError as error:
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_INPUT_DIR = PROJECT_ROOT / "data" / "processed" / "gse2034_v1"
 MANAGED_NAMES = {
-    "representatives.npy",
-    "representative_labels.npy",
-    "representatives.csv",
+    "reference_vectors.npy",
+    "reference_labels.npy",
+    "reference_vectors.csv",
     "queries.npy",
     "query_labels.npy",
     "features.csv",
@@ -51,7 +51,7 @@ MANAGED_NAMES = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Cluster each GSE2034 outcome's representative pool separately "
+            "Cluster each GSE2034 outcome's training pool separately "
             "and replace its single centroid with K training-only subcentroids."
         )
     )
@@ -67,7 +67,7 @@ def parse_args() -> argparse.Namespace:
         help="destination (default: data/processed/gse2034_kK_v1)",
     )
     parser.add_argument(
-        "--representatives-per-class",
+        "--centroids-per-class",
         type=int,
         default=10,
         help="subcentroids learned per outcome class (default: 10)",
@@ -108,8 +108,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def validate_args(args: argparse.Namespace) -> None:
-    if args.representatives_per_class < 1:
-        raise ValueError("--representatives-per-class must be positive")
+    if args.centroids_per_class < 1:
+        raise ValueError("--centroids-per-class must be positive")
     if args.clustering_features < 1:
         raise ValueError("--clustering-features must be positive")
     if args.max_iterations < 1:
@@ -120,7 +120,7 @@ def validate_args(args: argparse.Namespace) -> None:
 
 def read_class_metadata(path: Path) -> dict[int, str]:
     if not path.is_file():
-        raise RuntimeError(f"missing representative metadata: {path}")
+        raise RuntimeError(f"missing centroid metadata: {path}")
     result: dict[int, str] = {}
     with path.open(encoding="utf-8", newline="") as source:
         for row in csv.DictReader(source):
@@ -128,13 +128,13 @@ def read_class_metadata(path: Path) -> dict[int, str]:
                 label = int(row["label"])
             except (KeyError, TypeError, ValueError) as error:
                 raise RuntimeError(
-                    f"{path.name} has invalid representative labels"
+                    f"{path.name} has invalid centroid labels"
                 ) from error
             if label in result:
                 raise RuntimeError(f"duplicate class label in {path.name}: {label}")
             result[label] = row.get("outcome") or f"class_{label}"
     if not result:
-        raise RuntimeError(f"{path.name} contains no representatives")
+        raise RuntimeError(f"{path.name} contains no centroids")
     return result
 
 
@@ -156,7 +156,7 @@ def main() -> int:
                 PROJECT_ROOT
                 / "data"
                 / "processed"
-                / f"gse2034_k{args.representatives_per_class}_v1"
+                / f"gse2034_k{args.centroids_per_class}_v1"
             )
         else:
             requested_output = args.output_dir.expanduser()
@@ -167,9 +167,9 @@ def main() -> int:
                 )
             output_dir = requested_output.resolve()
 
-        pool = load_matrix(input_dir / "representative_pool.npy")
+        pool = load_matrix(input_dir / "training_pool.npy")
         pool_labels = load_labels(
-            input_dir / "representative_pool_labels.npy",
+            input_dir / "training_pool_labels.npy",
             pool.shape[0],
         )
         queries = load_matrix(input_dir / "queries.npy")
@@ -180,19 +180,19 @@ def main() -> int:
         if pool.shape[1] != queries.shape[1]:
             raise RuntimeError("pool and query feature dimensions differ")
 
-        class_names = read_class_metadata(input_dir / "representatives.csv")
+        class_names = read_class_metadata(input_dir / "reference_vectors.csv")
         labels = tuple(sorted(class_names))
         if set(int(value) for value in np.unique(pool_labels)) != set(labels):
-            raise RuntimeError("pool labels do not match representatives.csv")
+            raise RuntimeError("pool labels do not match reference_vectors.csv")
         if not set(int(value) for value in np.unique(query_labels)).issubset(labels):
-            raise RuntimeError("query labels do not match representatives.csv")
+            raise RuntimeError("query labels do not match reference_vectors.csv")
         counts = {
             label: int(np.count_nonzero(pool_labels == label)) for label in labels
         }
         smallest = min(counts.values())
-        if args.representatives_per_class > smallest:
+        if args.centroids_per_class > smallest:
             raise RuntimeError(
-                f"requested {args.representatives_per_class} representatives per "
+                f"requested {args.centroids_per_class} centroids per "
                 f"class, but the smallest pool has only {smallest} samples"
             )
 
@@ -208,10 +208,10 @@ def main() -> int:
             )
             return 1
 
-        representative_count = len(labels) * args.representatives_per_class
+        reference_vector_count = len(labels) * args.centroids_per_class
         print(
-            f"Learning {args.representatives_per_class} subcentroids for each "
-            f"of {len(labels)} outcomes ({representative_count} representatives).",
+            f"Learning {args.centroids_per_class} subcentroids for each "
+            f"of {len(labels)} outcomes ({reference_vector_count} centroids).",
             flush=True,
         )
         with tempfile.TemporaryDirectory(
@@ -219,15 +219,15 @@ def main() -> int:
             dir=output_dir,
         ) as temporary_directory:
             staging = Path(temporary_directory)
-            representatives = np.lib.format.open_memmap(
-                staging / "representatives.npy",
+            reference_vectors = np.lib.format.open_memmap(
+                staging / "reference_vectors.npy",
                 mode="w+",
                 dtype=np.dtype("<f4"),
-                shape=(representative_count, pool.shape[1]),
+                shape=(reference_vector_count, pool.shape[1]),
                 fortran_order=False,
             )
-            representative_labels = np.empty(
-                representative_count,
+            reference_labels = np.empty(
+                reference_vector_count,
                 dtype=np.dtype("<u2"),
             )
             records: list[dict[str, object]] = []
@@ -243,11 +243,11 @@ def main() -> int:
                 clustering_values = np.asarray(pool[np.ix_(rows, features)])
                 assignments, iterations, inertia = kmeans(
                     clustering_values,
-                    args.representatives_per_class,
+                    args.centroids_per_class,
                     args.seed + label * 1_000_003,
                     args.max_iterations,
                 )
-                for cluster in range(args.representatives_per_class):
+                for cluster in range(args.centroids_per_class):
                     member_rows = rows[assignments == cluster]
                     for start in range(0, pool.shape[1], args.feature_block_size):
                         end = min(start + args.feature_block_size, pool.shape[1])
@@ -255,11 +255,11 @@ def main() -> int:
                             pool[member_rows, start:end],
                             dtype=np.float64,
                         )
-                        representatives[output_row, start:end] = np.mean(
+                        reference_vectors[output_row, start:end] = np.mean(
                             values,
                             axis=0,
                         )
-                    representative_labels[output_row] = label
+                    reference_labels[output_row] = label
                     records.append(
                         {
                             "row_index": output_row,
@@ -281,14 +281,14 @@ def main() -> int:
                     flush=True,
                 )
 
-            representatives.flush()
-            del representatives
+            reference_vectors.flush()
+            del reference_vectors
             np.save(
-                staging / "representative_labels.npy",
-                representative_labels,
+                staging / "reference_labels.npy",
+                reference_labels,
                 allow_pickle=False,
             )
-            with (staging / "representatives.csv").open(
+            with (staging / "reference_vectors.csv").open(
                 "w",
                 encoding="utf-8",
                 newline="",
@@ -314,23 +314,23 @@ def main() -> int:
 
             metadata = {
                 "dataset_name": "GSE2034 training-pool subcentroids",
-                "format_version": 1,
+                "format_version": 2,
                 "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                 "source_dataset": str(input_dir),
-                "representatives": {
-                    "file": "representatives.npy",
-                    "shape": [representative_count, pool.shape[1]],
+                "reference_vectors": {
+                    "file": "reference_vectors.npy",
+                    "shape": [reference_vector_count, pool.shape[1]],
                     "dtype": "float32",
-                    "labels_file": "representative_labels.npy",
+                    "labels_file": "reference_labels.npy",
                     "labels_dtype": "uint16",
                     "classes": len(labels),
-                    "count_per_class": args.representatives_per_class,
+                    "count_per_class": args.centroids_per_class,
                     "counts_by_class": {
-                        class_names[label]: args.representatives_per_class
+                        class_names[label]: args.centroids_per_class
                         for label in labels
                     },
                     "construction": "per-class k-means subcentroids",
-                    "sha256": sha256(staging / "representatives.npy"),
+                    "sha256": sha256(staging / "reference_vectors.npy"),
                 },
                 "clustering": {
                     "assignment_space": (
@@ -341,7 +341,7 @@ def main() -> int:
                     "initialization": "k-means++",
                     "seed": args.seed,
                     "maximum_iterations": args.max_iterations,
-                    "metadata_file": "representatives.csv",
+                    "metadata_file": "reference_vectors.csv",
                 },
                 "queries": {
                     "file": "queries.npy",
@@ -350,7 +350,7 @@ def main() -> int:
                     "storage": "hardlink_to_source_dataset",
                 },
                 "leakage_control": (
-                    "only representative_pool.npy rows were used for feature "
+                    "only training_pool.npy rows were used for feature "
                     "selection, clustering, and centroid construction; held-out "
                     "queries are hard-linked unchanged"
                 ),
@@ -378,7 +378,7 @@ def main() -> int:
         return 1
 
     print(
-        f"Saved {representative_count} representatives and {queries.shape[0]} "
+        f"Saved {reference_vector_count} class centroids and {queries.shape[0]} "
         f"queries to {output_dir}.",
         flush=True,
     )

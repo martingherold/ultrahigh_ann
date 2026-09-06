@@ -338,9 +338,9 @@ DenseMatrix load_representative_matrix(
     const std::filesystem::path& directory)
 {
     DenseMatrix representatives =
-        load_float_matrix_npy(directory / "representatives.npy");
+        load_float_matrix_npy(directory / "reference_vectors.npy");
     if (representatives.rows() == 0) {
-        throw std::runtime_error("dataset has no representatives");
+        throw std::runtime_error("dataset has no reference vectors");
     }
     if (representatives.cols() == 0) {
         throw std::runtime_error("dataset has no features");
@@ -358,7 +358,7 @@ RepresentativeQueryDataset load_representative_query_dataset(
     std::vector<std::size_t> query_labels =
         load_labels(directory / "query_labels.npy");
     const std::filesystem::path representative_labels_path =
-        directory / "representative_labels.npy";
+        directory / "reference_labels.npy";
     std::vector<std::size_t> representative_labels;
     if (std::filesystem::is_regular_file(representative_labels_path)) {
         representative_labels = load_labels(representative_labels_path);
@@ -375,7 +375,7 @@ RepresentativeQueryDataset load_representative_query_dataset(
     }
     if (representatives.cols() != queries.cols()) {
         throw std::runtime_error(
-            "representative and query dimensions do not match");
+            "reference-vector and query dimensions do not match");
     }
     if (query_labels.size() != queries.rows()) {
         throw std::runtime_error(
@@ -383,7 +383,7 @@ RepresentativeQueryDataset load_representative_query_dataset(
     }
     if (representative_labels.size() != representatives.rows()) {
         throw std::runtime_error(
-            "representative label count does not match representative row count");
+            "reference label count does not match reference-vector row count");
     }
     const std::unordered_set<std::size_t> available_labels{
         representative_labels.begin(),

@@ -77,9 +77,9 @@ void print_usage(std::string_view program, ProbabilityDistance distance)
               << " --input FILE --output FILE --policy POLICY\n\n"
               << "Compute reusable " << distance_name(distance)
               << " importance-sampling probabilities from a float32 NPY "
-                 "representative matrix.\n\n"
+                 "matrix of reference vectors.\n\n"
               << "Options:\n"
-              << "  --input FILE      Two-dimensional float32 NPY matrix\n"
+              << "  --input FILE      Float32 NPY matrix; one reference vector per row\n"
               << "  --output FILE     Source-bound UAP v2 output file\n"
               << "  --policy POLICY   sequential, cpu_parallel, gpu_fp32";
     if (distance == ProbabilityDistance::l2) {
@@ -286,11 +286,11 @@ int run_compute_importance_probabilities(int argc, char** argv,
         const double load_ms = elapsed_ms(load_start);
         if (representatives.rows() < 2) {
             throw std::runtime_error(
-                "the representative matrix must contain at least two rows");
+                "the matrix of reference vectors must contain at least two rows");
         }
         if (representatives.cols() == 0) {
             throw std::runtime_error(
-                "the representative matrix must contain at least one column");
+                "the matrix of reference vectors must contain at least one column");
         }
 
         const auto hash_start = Clock::now();
@@ -371,9 +371,9 @@ int run_compute_importance_probabilities(int argc, char** argv,
                     : 1;
             std::cout << "workers=" << worker_count << '\n';
         }
-        std::cout << "representatives=" << representatives.rows() << '\n'
+        std::cout << "reference_vectors=" << representatives.rows() << '\n'
                   << "dimension=" << representatives.cols() << '\n'
-                  << "representatives_sha256="
+                  << "reference_vectors_sha256="
                   << io::sha256_hex(representatives_sha256) << '\n'
                   << "sampling_mass=" << sampling_mass << '\n'
                   << "load_ms=" << load_ms << '\n'

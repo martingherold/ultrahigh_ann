@@ -24,14 +24,14 @@ EXPECTED_REPORTS = {
     "tcga_pancancer_r7028_l2_cuda_crossover.json",
 }
 EXPECTED_FIGURES = {
-    "tcga_pancancer_r33_l2_cpu_sparse_sweep_latency_fidelity_pareto.png",
-    "tcga_pancancer_r33_l2_cpu_uniform_vs_flat_latency_fidelity_pareto.png",
+    "tcga_pancancer_r33_l2_cpu_sparse_sweep_latency_agreement_pareto.png",
+    "tcga_pancancer_r33_l2_cpu_uniform_vs_flat_latency_agreement_pareto.png",
     "tcga_pancancer_r7028_l2_cuda_crossover_latency_distance_excess_mean.png",
 }
 
 
 def valid_provenance_report() -> dict[str, object]:
-    representatives_sha256 = "a" * 64
+    reference_vectors_sha256 = "a" * 64
     return {
         "provenance": {
             "source": {
@@ -71,8 +71,8 @@ def valid_provenance_report() -> dict[str, object]:
             },
         },
         "dataset": {
-            "representatives_sha256": representatives_sha256,
-            "representative_labels_sha256": "d" * 64,
+            "reference_vectors_sha256": reference_vectors_sha256,
+            "reference_labels_sha256": "d" * 64,
             "queries_sha256": "e" * 64,
             "query_labels_sha256": "f" * 64,
             "labels_available": True,
@@ -81,7 +81,7 @@ def valid_provenance_report() -> dict[str, object]:
             "required": True,
             "source_file": None,
             "source_sha256": None,
-            "representatives_sha256": representatives_sha256,
+            "reference_vectors_sha256": reference_vectors_sha256,
         },
     }
 
@@ -89,6 +89,23 @@ def valid_provenance_report() -> dict[str, object]:
 class BenchmarkSchemaTest(unittest.TestCase):
     def test_valid_provenance_contract_is_accepted(self) -> None:
         validate_report_provenance(valid_provenance_report())
+
+    def test_joined_provenance_requires_source_checksums(self) -> None:
+        report = valid_provenance_report()
+        invocation = {
+            "tool": "scripts/reporting/join_benchmark_reports.py",
+            "source_reports": [{"path": "first.json", "sha256": "a" * 64}],
+        }
+        report["provenance"]["invocation"] = invocation
+        validate_report_provenance(report)
+
+        del invocation["source_reports"][0]["sha256"]
+        with self.assertRaisesRegex(RuntimeError, "SHA-256"):
+            validate_report_provenance(report)
+
+        invocation["source_reports"] = []
+        with self.assertRaisesRegex(RuntimeError, "source reports"):
+            validate_report_provenance(report)
 
     def test_missing_provenance_is_rejected(self) -> None:
         report = valid_provenance_report()
@@ -108,7 +125,7 @@ class BenchmarkSchemaTest(unittest.TestCase):
         report = copy.deepcopy(valid_provenance_report())
         probabilities = report["sampling_probabilities"]
         assert isinstance(probabilities, dict)
-        probabilities["representatives_sha256"] = "0" * 64
+        probabilities["reference_vectors_sha256"] = "0" * 64
         with self.assertRaisesRegex(RuntimeError, "not bound"):
             validate_report_provenance(report)
 
@@ -128,7 +145,7 @@ class BenchmarkSchemaTest(unittest.TestCase):
                 self.assertEqual(len(references), 1)
                 self.assertEqual(references[0]["index"], "exact")
 
-    def test_tracked_reports_use_schema_5_only(self) -> None:
+    def test_tracked_reports_use_schema_6_only(self) -> None:
         reports = sorted((PROJECT_ROOT / "assets").glob("*.json"))
         self.assertEqual({path.name for path in reports}, EXPECTED_REPORTS)
         figures = {path.name for path in (PROJECT_ROOT / "assets").glob("*.png")}
@@ -136,7 +153,7 @@ class BenchmarkSchemaTest(unittest.TestCase):
         for path in reports:
             with self.subTest(report=path.name):
                 report = json.loads(path.read_text(encoding="utf-8"))
-                self.assertEqual(report["schema_version"], 5)
+                self.assertEqual(report["schema_version"], 6)
                 validate_report_provenance(report)
                 source = report["provenance"]["source"]
                 self.assertEqual(source["project_version"], "0.2.0")
@@ -167,7 +184,7 @@ class BenchmarkSchemaTest(unittest.TestCase):
                 dataset = report["dataset"]
                 labels_available = dataset["labels_available"]
                 self.assertEqual(
-                    dataset["representative_labels_file"] is not None,
+                    dataset["reference_labels_file"] is not None,
                     labels_available,
                 )
                 self.assertEqual(

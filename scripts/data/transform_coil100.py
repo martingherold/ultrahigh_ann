@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Transform COIL-100 into held-out queries and object representatives."""
+"""Transform COIL-100 into held-out queries and object centroids."""
 
 from __future__ import annotations
 
@@ -43,9 +43,9 @@ DEFAULT_QUERY_VIEW_COUNT = 18
 CHANNELS = ("red", "green", "blue")
 HASH_BLOCK_SIZE = 1024 * 1024
 REQUIRED_OUTPUT_NAMES = {
-    "representatives.npy",
-    "representative_labels.npy",
-    "representatives.csv",
+    "reference_vectors.npy",
+    "reference_labels.npy",
+    "reference_vectors.csv",
     "queries.npy",
     "query_labels.npy",
     "samples.csv",
@@ -54,8 +54,8 @@ REQUIRED_OUTPUT_NAMES = {
     "source_manifest.json",
 }
 OPTIONAL_OUTPUT_NAMES = {
-    "representative_pool.npy",
-    "representative_pool_labels.npy",
+    "training_pool.npy",
+    "training_pool_labels.npy",
 }
 MANAGED_OUTPUT_NAMES = REQUIRED_OUTPUT_NAMES | OPTIONAL_OUTPUT_NAMES
 
@@ -121,7 +121,7 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--write-representative-pool",
+        "--write-training-pool",
         action="store_true",
         help=(
             "also materialize all non-query views and labels (about 1.0 GiB "
@@ -236,10 +236,10 @@ def write_matrices(
     inventory: dict[tuple[int, int], Path],
     layout: TransformLayout,
     staging_dir: Path,
-    write_representative_pool: bool,
+    write_training_pool: bool,
 ) -> None:
-    representatives = np.lib.format.open_memmap(
-        staging_dir / "representatives.npy",
+    reference_vectors = np.lib.format.open_memmap(
+        staging_dir / "reference_vectors.npy",
         mode="w+",
         dtype=np.dtype("<f4"),
         shape=(len(layout.object_ids), layout.dimensions),
@@ -252,10 +252,10 @@ def write_matrices(
         shape=(layout.query_count, layout.dimensions),
         fortran_order=False,
     )
-    representative_pool = None
-    if write_representative_pool:
-        representative_pool = np.lib.format.open_memmap(
-            staging_dir / "representative_pool.npy",
+    training_pool = None
+    if write_training_pool:
+        training_pool = np.lib.format.open_memmap(
+            staging_dir / "training_pool.npy",
             mode="w+",
             dtype=np.dtype("<f4"),
             shape=(layout.pool_count, layout.dimensions),
@@ -271,11 +271,11 @@ def write_matrices(
                 path = inventory[(object_id, angle)]
                 pixels = decode_ppm(path, validate_header(path, layout))
                 centroid_sum += pixels
-                if representative_pool is not None:
-                    representative_pool[pool_row, :] = pixels
+                if training_pool is not None:
+                    training_pool[pool_row, :] = pixels
                 pool_row += 1
 
-            representatives[object_index, :] = (
+            reference_vectors[object_index, :] = (
                 centroid_sum / len(layout.pool_angles)
             )
             for angle in layout.query_angles:
@@ -297,15 +297,15 @@ def write_matrices(
 
         if query_row != layout.query_count or pool_row != layout.pool_count:
             raise RuntimeError("internal COIL-100 output row count mismatch")
-        representatives.flush()
+        reference_vectors.flush()
         queries.flush()
-        if representative_pool is not None:
-            representative_pool.flush()
+        if training_pool is not None:
+            training_pool.flush()
     finally:
-        del representatives
+        del reference_vectors
         del queries
-        if representative_pool is not None:
-            del representative_pool
+        if training_pool is not None:
+            del training_pool
 
 
 def write_labels(
@@ -359,7 +359,7 @@ def write_samples(path: Path, layout: TransformLayout) -> None:
                     role = "query"
                     role_row = query_rows[key]
                 else:
-                    role = "representative_pool"
+                    role = "training_pool"
                     role_row = pool_rows[key]
                 writer.writerow(
                     {
@@ -375,7 +375,7 @@ def write_samples(path: Path, layout: TransformLayout) -> None:
                 sample_index += 1
 
 
-def write_representatives(path: Path, layout: TransformLayout) -> None:
+def write_reference_vectors(path: Path, layout: TransformLayout) -> None:
     with path.open("w", encoding="utf-8", newline="") as output:
         fieldnames = (
             "row_index",
@@ -453,8 +453,8 @@ def build_dataset_metadata(
         if path.is_file() and path.name != "dataset.json"
     }
     matrices: dict[str, object] = {
-        "representatives": {
-            "file": "representatives.npy",
+        "reference_vectors": {
+            "file": "reference_vectors.npy",
             "shape": [len(layout.object_ids), layout.dimensions],
             "purpose": "one training-view centroid per physical object",
         },
@@ -472,24 +472,24 @@ def build_dataset_metadata(
             "value_range": [0.0, 1.0],
         },
     }
-    if args.write_representative_pool:
-        matrices["representative_pool"] = {
-            "file": "representative_pool.npy",
+    if args.write_training_pool:
+        matrices["training_pool"] = {
+            "file": "training_pool.npy",
             "shape": [layout.pool_count, layout.dimensions],
-            "purpose": "non-query views used to construct representatives",
+            "purpose": "non-query views used to construct centroids",
         }
 
     return {
         "dataset_name": "COIL-100 contiguous-azimuth split",
-        "format_version": 1,
+        "format_version": 2,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "matrices": matrices,
         "labels": {
-            "representative_file": "representative_labels.npy",
+            "reference_file": "reference_labels.npy",
             "query_file": "query_labels.npy",
-            "representative_pool_file": (
-                "representative_pool_labels.npy"
-                if args.write_representative_pool
+            "training_pool_file": (
+                "training_pool_labels.npy"
+                if args.write_training_pool
                 else None
             ),
             "dtype": "uint16",
@@ -515,21 +515,21 @@ def build_dataset_metadata(
             "query_start_angle_degrees": args.query_start_angle,
             "query_view_count_per_object": len(layout.query_angles),
             "query_angles_degrees_in_row_order": list(layout.query_angles),
-            "representative_pool_view_count_per_object": len(
+            "training_pool_view_count_per_object": len(
                 layout.pool_angles
             ),
-            "representative_pool_angles_degrees": list(layout.pool_angles),
+            "training_pool_angles_degrees": list(layout.pool_angles),
             "leakage_control": (
                 "adjacent held-out views are not randomly interleaved with "
-                "representative-construction views"
+                "training views"
             ),
         },
-        "representative_construction": {
-            "metadata_file": "representatives.csv",
+        "reference_vector_construction": {
+            "metadata_file": "reference_vectors.csv",
             "method": "arithmetic_mean_centroid",
             "count_per_object": 1,
-            "source": "normalized views assigned role=representative_pool",
-            "pool_matrix_materialized": args.write_representative_pool,
+            "source": "normalized views assigned role=training_pool",
+            "pool_matrix_materialized": args.write_training_pool,
         },
         "features": {
             "file": "features.csv",
@@ -540,7 +540,7 @@ def build_dataset_metadata(
             "file": "samples.csv",
             "count": len(layout.object_ids) * len(layout.all_angles),
             "counts_by_role": {
-                "representative_pool": layout.pool_count,
+                "training_pool": layout.pool_count,
                 "query": layout.query_count,
             },
         },
@@ -604,7 +604,7 @@ def main() -> int:
 
         print(
             f"Transforming {len(inventory):,} images: "
-            f"{layout.pool_count:,} representative-pool views and "
+            f"{layout.pool_count:,} training-pool views and "
             f"{layout.query_count:,} held-out queries with "
             f"{layout.dimensions:,} dimensions.",
             flush=True,
@@ -618,10 +618,10 @@ def main() -> int:
                 inventory,
                 layout,
                 staging_dir,
-                args.write_representative_pool,
+                args.write_training_pool,
             )
             write_labels(
-                staging_dir / "representative_labels.npy",
+                staging_dir / "reference_labels.npy",
                 layout.object_ids,
                 1,
             )
@@ -630,14 +630,14 @@ def main() -> int:
                 layout.object_ids,
                 len(layout.query_angles),
             )
-            if args.write_representative_pool:
+            if args.write_training_pool:
                 write_labels(
-                    staging_dir / "representative_pool_labels.npy",
+                    staging_dir / "training_pool_labels.npy",
                     layout.object_ids,
                     len(layout.pool_angles),
                 )
             write_samples(staging_dir / "samples.csv", layout)
-            write_representatives(staging_dir / "representatives.csv", layout)
+            write_reference_vectors(staging_dir / "reference_vectors.csv", layout)
             write_features(staging_dir / "features.csv", layout)
 
             source_manifest = read_source_manifest(input_dir)
@@ -673,7 +673,7 @@ def main() -> int:
         return 1
 
     print(
-        f"Saved {len(layout.object_ids):,} representatives and "
+        f"Saved {len(layout.object_ids):,} class centroids and "
         f"{layout.query_count:,} queries with {layout.dimensions:,} "
         f"dimensions to {output_dir}.",
         flush=True,

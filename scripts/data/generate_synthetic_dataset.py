@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a deterministic nearest-representative quickstart dataset."""
+"""Generate a deterministic nearest-neighbor quickstart dataset."""
 
 from __future__ import annotations
 
@@ -29,8 +29,8 @@ DEFAULT_INTERPOLATIONS = "0.30,0.45,0.49,0.497"
 DIFFICULTY_NAMES = ("easy", "medium", "hard", "near_boundary")
 HASH_BLOCK_SIZE = 1024 * 1024
 MANAGED_NAMES = {
-    "representatives.npy",
-    "representative_labels.npy",
+    "reference_vectors.npy",
+    "reference_labels.npy",
     "queries.npy",
     "query_labels.npy",
     "queries.csv",
@@ -41,7 +41,7 @@ MANAGED_NAMES = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Generate representatives and controlled-margin queries for a "
+            "Generate reference vectors and controlled-margin queries for a "
             "small, deterministic L2 benchmark."
         )
     )
@@ -52,10 +52,10 @@ def parse_args() -> argparse.Namespace:
         help=f"destination directory (default: {DEFAULT_OUTPUT_DIR})",
     )
     parser.add_argument(
-        "--representatives",
+        "--reference-vectors",
         type=int,
         default=64,
-        help="number of representatives (default: 64)",
+        help="number of reference vectors (default: 64)",
     )
     parser.add_argument(
         "--queries",
@@ -73,13 +73,13 @@ def parse_args() -> argparse.Namespace:
         "--informative-dimensions",
         type=int,
         default=2048,
-        help="coordinates with full representative variation (default: 2048)",
+        help="coordinates with full reference-vector variation (default: 2048)",
     )
     parser.add_argument(
         "--background-scale",
         type=float,
         default=0.02,
-        help="representative scale outside informative coordinates (default: 0.02)",
+        help="reference-vector scale outside informative coordinates (default: 0.02)",
     )
     parser.add_argument(
         "--query-noise",
@@ -123,10 +123,10 @@ def parse_interpolations(value: str) -> tuple[float, ...]:
 
 
 def validate_args(args: argparse.Namespace) -> tuple[float, ...]:
-    if args.representatives < 2:
-        raise ValueError("--representatives must be at least 2")
-    if args.representatives > np.iinfo(np.uint16).max + 1:
-        raise ValueError("--representatives exceeds the uint16 label capacity")
+    if args.reference_vectors < 2:
+        raise ValueError("--reference-vectors must be at least 2")
+    if args.reference_vectors > np.iinfo(np.uint16).max + 1:
+        raise ValueError("--reference-vectors exceeds the uint16 label capacity")
     if args.queries < 1:
         raise ValueError("--queries must be positive")
     if args.dimensions < 1:
@@ -152,31 +152,31 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def nearest_representatives(
+def nearest_neighbors(
     queries: np.ndarray,
-    representatives: np.ndarray,
+    reference_vectors: np.ndarray,
 ) -> np.ndarray:
     queries64 = np.asarray(queries, dtype=np.float64)
-    representatives64 = np.asarray(representatives, dtype=np.float64)
+    reference_vectors64 = np.asarray(reference_vectors, dtype=np.float64)
     query_norms = np.einsum("ij,ij->i", queries64, queries64)
     representative_norms = np.einsum(
         "ij,ij->i",
-        representatives64,
-        representatives64,
+        reference_vectors64,
+        reference_vectors64,
     )
     distances = (
         query_norms[:, None]
         + representative_norms[None, :]
-        - 2.0 * queries64 @ representatives64.T
+        - 2.0 * queries64 @ reference_vectors64.T
     )
     return np.argmin(distances, axis=1).astype(np.intp, copy=False)
 
 
-def nearest_rivals(representatives: np.ndarray) -> np.ndarray:
-    representatives64 = np.asarray(representatives, dtype=np.float64)
-    norms = np.einsum("ij,ij->i", representatives64, representatives64)
+def nearest_rivals(reference_vectors: np.ndarray) -> np.ndarray:
+    reference_vectors64 = np.asarray(reference_vectors, dtype=np.float64)
+    norms = np.einsum("ij,ij->i", reference_vectors64, reference_vectors64)
     distances = norms[:, None] + norms[None, :] - 2.0 * (
-        representatives64 @ representatives64.T
+        reference_vectors64 @ reference_vectors64.T
     )
     np.fill_diagonal(distances, np.inf)
     return np.argmin(distances, axis=1).astype(np.intp, copy=False)
@@ -197,16 +197,16 @@ def generate_arrays(
     scales = np.full(args.dimensions, args.background_scale, dtype=np.float32)
     scales[informative_indices] = np.float32(1.0)
 
-    representatives = random_engine.standard_normal(
-        (args.representatives, args.dimensions),
+    reference_vectors = random_engine.standard_normal(
+        (args.reference_vectors, args.dimensions),
         dtype=np.float32,
     )
-    representatives *= scales[None, :]
-    representatives = np.asarray(representatives, dtype="<f4", order="C")
-    representative_labels = np.arange(args.representatives, dtype="<u2")
+    reference_vectors *= scales[None, :]
+    reference_vectors = np.asarray(reference_vectors, dtype="<f4", order="C")
+    reference_labels = np.arange(args.reference_vectors, dtype="<u2")
 
-    rivals_by_target = nearest_rivals(representatives)
-    targets = np.arange(args.queries, dtype=np.intp) % args.representatives
+    rivals_by_target = nearest_rivals(reference_vectors)
+    targets = np.arange(args.queries, dtype=np.intp) % args.reference_vectors
     random_engine.shuffle(targets)
     difficulty_indices = np.arange(args.queries, dtype=np.intp) % len(interpolations)
     random_engine.shuffle(difficulty_indices)
@@ -217,8 +217,8 @@ def generate_arrays(
 
     queries = (
         (np.float32(1.0) - interpolation_values[:, None])
-        * representatives[targets]
-        + interpolation_values[:, None] * representatives[rivals]
+        * reference_vectors[targets]
+        + interpolation_values[:, None] * reference_vectors[rivals]
     )
     if args.query_noise != 0.0:
         noise = random_engine.standard_normal(
@@ -231,15 +231,15 @@ def generate_arrays(
 
     repair_steps = np.zeros(args.queries, dtype=np.uint8)
     for _ in range(8):
-        predictions = nearest_representatives(queries, representatives)
+        predictions = nearest_neighbors(queries, reference_vectors)
         incorrect = predictions != targets
         if not np.any(incorrect):
             break
         queries[incorrect] = np.float32(0.5) * (
-            queries[incorrect] + representatives[targets[incorrect]]
+            queries[incorrect] + reference_vectors[targets[incorrect]]
         )
         repair_steps[incorrect] += 1
-    predictions = nearest_representatives(queries, representatives)
+    predictions = nearest_neighbors(queries, reference_vectors)
     if np.any(predictions != targets):
         raise RuntimeError("could not keep every synthetic query in its target cell")
 
@@ -266,8 +266,8 @@ def generate_arrays(
             }
         )
     return (
-        representatives,
-        representative_labels,
+        reference_vectors,
+        reference_labels,
         queries,
         query_labels,
         records,
@@ -293,8 +293,8 @@ def main() -> int:
             return 1
 
         (
-            representatives,
-            representative_labels,
+            reference_vectors,
+            reference_labels,
             queries,
             query_labels,
             query_records,
@@ -307,13 +307,13 @@ def main() -> int:
         ) as temporary_directory:
             staging = Path(temporary_directory)
             np.save(
-                staging / "representatives.npy",
-                representatives,
+                staging / "reference_vectors.npy",
+                reference_vectors,
                 allow_pickle=False,
             )
             np.save(
-                staging / "representative_labels.npy",
-                representative_labels,
+                staging / "reference_labels.npy",
+                reference_labels,
                 allow_pickle=False,
             )
             np.save(staging / "queries.npy", queries, allow_pickle=False)
@@ -337,8 +337,8 @@ def main() -> int:
                 difficulty = str(record["difficulty"])
                 difficulty_counts[difficulty] = difficulty_counts.get(difficulty, 0) + 1
             metadata = {
-                "dataset_name": "Synthetic nearest-representative quickstart",
-                "format_version": 1,
+                "dataset_name": "Synthetic nearest-neighbor quickstart",
+                "format_version": 2,
                 "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                 "purpose": (
                     "Illustrative smoke benchmark; not empirical evidence for "
@@ -346,10 +346,10 @@ def main() -> int:
                 ),
                 "distance": "l2",
                 "seed": args.seed,
-                "representatives": {
-                    "file": "representatives.npy",
-                    "labels_file": "representative_labels.npy",
-                    "shape": list(representatives.shape),
+                "reference_vectors": {
+                    "file": "reference_vectors.npy",
+                    "labels_file": "reference_labels.npy",
+                    "shape": list(reference_vectors.shape),
                     "dtype": "float32",
                     "construction": "coordinate-scaled independent Gaussian vectors",
                 },
@@ -402,7 +402,7 @@ def main() -> int:
         if (output_dir / name).is_file()
     )
     print(
-        f"Saved {args.representatives} representatives x {args.dimensions} "
+        f"Saved {args.reference_vectors} reference vectors x {args.dimensions} "
         f"dimensions and {args.queries} queries to {output_dir} "
         f"({total_bytes / (1024 * 1024):.1f} MiB).",
         flush=True,

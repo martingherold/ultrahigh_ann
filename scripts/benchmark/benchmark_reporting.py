@@ -11,8 +11,8 @@ from pathlib import Path
 
 
 FORMAT_HEADER = "ultrahigh_ann_benchmark_setup_v2"
-REPORT_SCHEMA_VERSION = 5
-SUMMARY_SCHEMA_VERSION = 1
+REPORT_SCHEMA_VERSION = 6
+SUMMARY_SCHEMA_VERSION = 2
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -270,7 +270,7 @@ def require_sha256(
 
 
 def validate_report_provenance(report: dict[str, object]) -> None:
-    """Validate the schema-5 source/build/input identity contract."""
+    """Validate the schema-6 source/build/input identity contract."""
     provenance = require_mapping(report.get("provenance"), "provenance")
     source = require_mapping(provenance.get("source"), "provenance source")
     require_string(source, "project_version")
@@ -345,26 +345,37 @@ def validate_report_provenance(report: dict[str, object]) -> None:
             require_string(version, "version")
 
     invocation = require_mapping(provenance.get("invocation"), "invocation")
-    arguments = require_list(invocation.get("arguments"), "invocation arguments")
-    if not arguments or any(
-        not isinstance(value, str) or not value for value in arguments
-    ):
-        raise RuntimeError("batch report invocation arguments are malformed")
-    require_sha256(invocation, "setup_sha256")
+    if invocation.get("tool") == "scripts/reporting/join_benchmark_reports.py":
+        sources = require_list(invocation.get("source_reports"), "source reports")
+        if not sources:
+            raise RuntimeError("joined report must identify its source reports")
+        for value in sources:
+            source_report = require_mapping(value, "source report")
+            require_string(source_report, "path")
+            require_sha256(source_report, "sha256")
+    else:
+        arguments = require_list(
+            invocation.get("arguments"), "invocation arguments"
+        )
+        if not arguments or any(
+            not isinstance(value, str) or not value for value in arguments
+        ):
+            raise RuntimeError("batch report invocation arguments are malformed")
+        require_sha256(invocation, "setup_sha256")
 
     dataset = require_mapping(report.get("dataset"), "dataset")
-    representatives_sha256 = require_sha256(dataset, "representatives_sha256")
+    reference_vectors_sha256 = require_sha256(dataset, "reference_vectors_sha256")
     require_sha256(dataset, "queries_sha256")
     labels_available = require_boolean(dataset, "labels_available")
-    representative_labels_sha256 = require_sha256(
-        dataset, "representative_labels_sha256", optional=True
+    reference_labels_sha256 = require_sha256(
+        dataset, "reference_labels_sha256", optional=True
     )
     query_labels_sha256 = require_sha256(
         dataset, "query_labels_sha256", optional=True
     )
-    if labels_available != (representative_labels_sha256 is not None):
+    if labels_available != (reference_labels_sha256 is not None):
         raise RuntimeError(
-            "batch report representative-label checksum availability is inconsistent"
+            "batch report reference-label checksum availability is inconsistent"
         )
     if labels_available != (query_labels_sha256 is not None):
         raise RuntimeError(
@@ -383,15 +394,15 @@ def validate_report_provenance(report: dict[str, object]) -> None:
         raise RuntimeError(
             "batch report probability source and checksum are inconsistent"
         )
-    probability_representatives_sha256 = require_sha256(
-        probabilities, "representatives_sha256", optional=True
+    probability_reference_vectors_sha256 = require_sha256(
+        probabilities, "reference_vectors_sha256", optional=True
     )
     if probabilities_required:
-        if probability_representatives_sha256 != representatives_sha256:
+        if probability_reference_vectors_sha256 != reference_vectors_sha256:
             raise RuntimeError(
                 "batch report probability file is not bound to the dataset"
             )
-    elif probability_representatives_sha256 is not None:
+    elif probability_reference_vectors_sha256 is not None:
         raise RuntimeError(
             "batch report without sampling probabilities has a source binding"
         )
@@ -408,7 +419,7 @@ def approximation_summary_fields(
         approximation.get("distance_ratio"),
         "distance ratio diagnostics",
     )
-    raw_returned_rank = approximation.get("returned_representative_rank")
+    raw_returned_rank = approximation.get("returned_neighbor_rank")
     returned_rank = (
         None
         if raw_returned_rank is None
@@ -426,11 +437,11 @@ def approximation_summary_fields(
         )
 
     fields: dict[str, object] = {
-        "optimal_representative_count": require_integer(
+        "distance_optimal_count": require_integer(
             approximation,
             "distance_optimal_count",
         ),
-        "optimal_representative_rate": require_number(
+        "distance_optimal_rate": require_number(
             approximation,
             "distance_optimal_rate",
         ),
@@ -680,7 +691,7 @@ def flatten_direct_runs(
             )
             exact_query_ms = require_number(exact_measurement, "median_ms")
             accuracy = require_number(measurement, "accuracy")
-            agreement = require_number(measurement, "exact_choice_agreement")
+            agreement = require_number(measurement, "exact_neighbor_agreement")
             label_agreement = (
                 require_number(measurement, "label_agreement_with_exact")
                 if measurement.get("label_agreement_with_exact") is not None
@@ -689,7 +700,7 @@ def flatten_direct_runs(
             query_us = require_number(measurement, "median_microseconds_per_query")
             query_ms = require_number(measurement, "median_ms")
             agreement_count = require_integer(
-                measurement, "exact_choice_agreement_count"
+                measurement, "exact_neighbor_agreement_count"
             )
             rows.append(
                 {
@@ -702,9 +713,9 @@ def flatten_direct_runs(
                     "seed": require_integer(run, "seed"),
                     "query_count": query_count,
                     "dimension": dimension,
-                    "representative_count": require_integer(
+                    "reference_vector_count": require_integer(
                         dataset,
-                        "representative_count",
+                        "reference_vector_count",
                     ),
                     "exact_correct": require_integer(exact_measurement, "correct"),
                     f"{method}_correct": require_integer(measurement, "correct"),
@@ -764,7 +775,7 @@ def aggregate_direct_runs(
         "sampling_mass_estimate",
         f"{method}_index_bytes",
         "index_compression",
-        "optimal_representative_rate",
+        "distance_optimal_rate",
         "non_optimal_rate",
         "mean_distance_ratio",
         "median_distance_ratio",
@@ -917,8 +928,8 @@ def print_direct_aggregate_table(
 ) -> None:
     print(f"\n{method.capitalize()} sweep aggregate means:")
     print(
-        f"{'T':>7} {'B':>5} {'prototype':>11} {'class':>9} {'accuracy':>10} "
-        f"{'genes':>10} {'dimension':>11} {'query us':>11} {'speedup':>9}"
+        f"{'T':>7} {'B':>5} {'NN agree':>11} {'label agree':>11} {'label acc':>10} "
+        f"{'coords':>10} {'coords (%)':>11} {'query us':>11} {'speedup':>9}"
     )
     for aggregate in aggregate_direct_runs(rows, method):
         metrics = require_mapping(aggregate["metrics"], "aggregate metrics")
@@ -954,7 +965,7 @@ def print_direct_aggregate_table(
             f"{aggregate['repetitions']:7d} "
             f"{aggregate['batch_size']:5d} "
             f"{100.0 * float(agreement):10.2f}% "
-            f"{100.0 * float(label_agreement):8.2f}% "
+            f"{100.0 * float(label_agreement):10.2f}% "
             f"{100.0 * float(accuracy):9.2f}% "
             f"{float(coordinates):10.1f} "
             f"{100.0 * float(dimension):10.2f}% "
@@ -993,7 +1004,7 @@ def flatten_hierarchical_comparisons(
     dataset = require_mapping(report.get("dataset"), "dataset")
     exact = reference_run(report)
     exact_measurements = measurements_by_batch(exact)
-    representative_count = require_integer(dataset, "representative_count")
+    reference_vector_count = require_integer(dataset, "reference_vector_count")
     dimension = require_integer(dataset, "dimension")
     query_count = require_integer(dataset, "query_count_run")
 
@@ -1066,10 +1077,10 @@ def flatten_hierarchical_comparisons(
                 raise RuntimeError(f"reference run omits batch size {batch_size}")
             flat_accuracy = require_number(flat, "accuracy")
             hierarchical_accuracy = require_number(hierarchical, "accuracy")
-            flat_agreement = require_number(flat, "exact_choice_agreement")
+            flat_agreement = require_number(flat, "exact_neighbor_agreement")
             hierarchical_agreement = require_number(
                 hierarchical,
-                "exact_choice_agreement",
+                "exact_neighbor_agreement",
             )
             flat_label_agreement = (
                 require_number(flat, "label_agreement_with_exact")
@@ -1112,7 +1123,7 @@ def flatten_hierarchical_comparisons(
                     "projection_dimension": projection_dimension,
                     "seed": seed,
                     "query_count": query_count,
-                    "representative_count": representative_count,
+                    "reference_vector_count": reference_vector_count,
                     "dimension": dimension,
                     "exact_accuracy": require_number(exact_measurement, "accuracy"),
                     "flat_accuracy": flat_accuracy,
@@ -1195,7 +1206,7 @@ def aggregate_hierarchical_rows(
         "dimension_fraction",
         "hierarchical_index_bytes",
         "hierarchical_index_size_ratio_vs_flat",
-        "hierarchical_optimal_representative_rate",
+        "hierarchical_distance_optimal_rate",
         "hierarchical_non_optimal_rate",
         "hierarchical_mean_distance_ratio",
         "hierarchical_median_distance_ratio",
@@ -1321,9 +1332,9 @@ def print_hierarchical_aggregate_table(
 ) -> None:
     print(f"\n{distance_label} hierarchical sweep aggregate means:")
     print(
-        f"{'T':>6} {'p':>4} {'B':>5} {'class agr':>11} {'delta flat':>11} "
-        f"{'prototype':>10} "
-        f"{'accuracy':>10} {'query us':>10} {'vs flat':>9} {'vs exact':>9}"
+        f"{'T':>6} {'p':>4} {'B':>5} {'label agree':>11} {'delta flat':>11} "
+        f"{'NN agree':>10} "
+        f"{'label acc':>10} {'query us':>10} {'vs flat':>9} {'vs exact':>9}"
     )
     for aggregate in aggregate_hierarchical_rows(rows):
         class_agreement = hierarchical_mean_metric(
@@ -1332,7 +1343,7 @@ def print_hierarchical_aggregate_table(
         class_delta = hierarchical_mean_metric(
             aggregate, "hierarchical_label_agreement_delta_vs_flat"
         )
-        prototype_agreement = hierarchical_mean_metric(
+        neighbor_agreement = hierarchical_mean_metric(
             aggregate, "hierarchical_agreement_with_exact"
         )
         accuracy = hierarchical_mean_metric(aggregate, "hierarchical_accuracy")
@@ -1349,7 +1360,7 @@ def print_hierarchical_aggregate_table(
             f"{aggregate['batch_size']:5d} "
             f"{100.0 * class_agreement:10.2f}% "
             f"{100.0 * class_delta:+10.2f} "
-            f"{100.0 * prototype_agreement:9.2f}% "
+            f"{100.0 * neighbor_agreement:9.2f}% "
             f"{100.0 * accuracy:9.2f}% "
             f"{query_us:10.2f} "
             f"{flat_speedup:8.2f}x "

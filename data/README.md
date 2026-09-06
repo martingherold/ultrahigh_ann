@@ -19,19 +19,26 @@ committed when their licenses permit it.
 
 ## Synthetic quickstart
 
-Generate the small, deterministic representative-query dataset used by the
+Generate the small, deterministic nearest-neighbor dataset used by the
 recruiter-facing quickstart with:
 
 ```sh
 python3 scripts/data/generate_synthetic_dataset.py
 ```
 
-The default creates 64 representatives and 512 queries in 16,384 dimensions
-under `data/synthetic/quickstart_v1/`. Representative variation is concentrated
-in 2,048 informative coordinates with low-variation background coordinates.
+The default creates 64 reference vectors and 512 queries in 16,384 dimensions
+under `data/synthetic/quickstart_v1/`. Variation among reference vectors is
+concentrated in 2,048 informative coordinates with low-variation background coordinates.
 Queries interpolate between a target and its nearest rival at four controlled
 difficulty levels and are verified against exact L2 search. No training data is
-created or required. The generated directory is excluded from Git.
+created or required. The generated directory is excluded from Git. Use
+`--reference-vectors`, `--queries`, and `--dimensions` to change its size.
+
+Dataset generators write `reference_vectors.npy` for reference vectors and
+`reference_labels.npy` for their class labels. Training samples and their labels
+are stored in `training_pool.npy` and `training_pool_labels.npy` when the pool
+is materialized. Centroid metadata goes in `reference_vectors.csv`, and
+`samples.csv` identifies training samples with the role `training_pool`.
 
 ## TCGA Kidney Cancers
 
@@ -55,7 +62,7 @@ to replace a previous download or `--output-dir PATH` to select another
 destination.
 
 Transform the matrices into sample-major, row-contiguous `float32`
-representatives and queries for the ANN implementation:
+class centroids and queries for the ANN implementation:
 
 ```sh
 python3 scripts/data/transform_tcga_kidney.py
@@ -63,14 +70,15 @@ python3 scripts/data/transform_tcga_kidney.py
 
 By default, the transform retains primary solid tumors (TCGA sample-type code
 `01`) and writes to `data/processed/tcga_kidney_v1/`. Participants are assigned
-to a representative-construction pool or a held-out query set, stratified by
+to a training pool or a held-out query set, stratified by
 cancer subtype. The transform produces one arithmetic-mean centroid per subtype
-in `representatives.npy`, explicit centroid labels in
-`representative_labels.npy`, held-out vectors in `queries.npy`, their labels,
-the full `representative_pool.npy` for constructing alternative representatives
+in `reference_vectors.npy`, explicit centroid labels in
+`reference_labels.npy`, held-out vectors in `queries.npy`, their labels,
+the full `training_pool.npy` for constructing alternative reference vectors
 such as medoids or subcentroids, sample and feature tables, and a JSON provenance
 record. The source matrices are streamed, so their full contents are never held
-in memory. Use `--help` for filtering, role fraction, input/output, seed, and
+in memory. Use `--training-fraction` to set the fraction of participants used
+to construct centroids, and `--help` for filtering, input/output, seed, and
 overwrite options.
 
 The kidney-specific preparation workflow is retained as an additional dataset
@@ -120,28 +128,28 @@ python3 scripts/data/transform_tcga_pancancer.py \
 ```
 
 The transform streams all source matrices, verifies their feature alignment,
-constructs each centroid only from its representative-pool participants, and
-writes `representatives.npy`, `representative_labels.npy`, `queries.npy`,
+constructs each centroid only from its training participants, and
+writes `reference_vectors.npy`, `reference_labels.npy`, `queries.npy`,
 `query_labels.npy`, sample and feature tables, and complete JSON provenance to
-`data/processed/tcga_pancancer_v1/`. The representative-construction samples
+`data/processed/tcga_pancancer_v1/`. The training samples
 remain identified in `samples.csv` but are not duplicated into another large
-matrix by default. Pass `--write-representative-pool` if alternative centroid,
-medoid, or subcentroid construction requires `representative_pool.npy`.
+matrix by default. Pass `--write-training-pool` if alternative centroid,
+medoid, or subcentroid construction requires `training_pool.npy`.
 
-To learn several representatives per cancer project, materialize that
+To learn several centroids per cancer project, materialize that
 training-only pool and cluster each project independently:
 
 ```sh
 python3 scripts/data/transform_tcga_pancancer.py \
-    --write-representative-pool --force
-python3 scripts/data/expand_tcga_pancancer_representatives.py \
-    --representatives-per-class 4
+    --write-training-pool --force
+python3 scripts/data/expand_tcga_pancancer_centroids.py \
+    --centroids-per-class 4
 ```
 
 The default expansion selects 256 high-variance genes independently within
 each training project for k-means assignments, then computes every subcentroid
-over all features. It writes `tcga_pancancer_k4_v1/` with 132 representative
-rows and `representative_labels.npy`, which maps those rows back to the 33
+over all features. It writes `tcga_pancancer_k4_v1/` with 132 centroid
+rows and `reference_labels.npy`, which maps those rows back to the 33
 cancer labels. Held-out queries are hard-linked unchanged and never participate
 in feature selection, clustering, or centroid construction.
 
@@ -159,7 +167,7 @@ The CUDA L1 experiment uses the same matrices and keeps the CPU exact scan as
 its numerical reference:
 
 ```sh
-./build-cuda/nearest_representative_benchmark \
+./build-cuda/nearest_neighbor_benchmark \
     --setup experiments/tcga_pancancer/cuda/tcga_pancancer_r33_l1_cuda_exact_vs_flat.tsv
 ```
 
@@ -190,12 +198,12 @@ python3 scripts/data/transform_coil100.py
 
 The default split holds out the contiguous azimuth block from 0 through 85
 degrees: 18 query views per object and 1,800 queries in total. Each of the 100
-representatives is the arithmetic-mean centroid of that object's other 54
-views, so query pixels never contribute to its representative. Pixels are
+reference vectors is the arithmetic-mean centroid of that object's other 54
+views, so query pixels never contribute to its centroid. Pixels are
 normalized channel-wise to `[0,1]` and flattened in row, column, RGB order,
-giving 49,152 dimensions. The transform writes `representatives.npy`,
-`representative_labels.npy`, `queries.npy`, `query_labels.npy`,
-sample/feature/representative tables, and a
+giving 49,152 dimensions. The transform writes `reference_vectors.npy`,
+`reference_labels.npy`, `queries.npy`, `query_labels.npy`,
+sample, feature, and centroid tables, and a
 checksum-rich `dataset.json` to `data/processed/coil100_v1/`.
 
 Repeat the experiment with rotated held-out sectors to measure split
@@ -207,7 +215,7 @@ python3 scripts/data/transform_coil100.py \
     --output-dir data/processed/coil100_start90_v1
 ```
 
-Pass `--write-representative-pool` only when constructing medoids or multiple
+Pass `--write-training-pool` only when constructing medoids or multiple
 subcentroids; the optional matrix is about 1.0 GiB. The former COIL-100 sweep
 grids are intentionally not part of the six-setup public catalog. To extend the
 evaluation locally, create a version-two setup pointing at the processed
@@ -240,12 +248,12 @@ Create the benchmark matrices with:
 python3 scripts/data/transform_gse2034.py
 ```
 
-The default seed-42 stratified split places 200 patients in the representative
+The default seed-42 stratified split places 200 patients in the training
 pool and holds out 86 queries. The transform applies `log2(x+1)`, fits each
 probe set's mean and population standard deviation using only the
-representative pool, and applies those statistics to both roles. It then forms
+training pool, and applies those statistics to both roles. It then forms
 one training-only arithmetic-mean centroid for each outcome class. The output
-under `data/processed/gse2034_v1/` contains two representatives and 86 queries
+under `data/processed/gse2034_v1/` contains two class centroids and 86 queries
 in the original 22,283 dimensions, as well as the training pool, normalization
 arrays, labels, sample/probe tables, checksums, and complete split provenance.
 
@@ -253,23 +261,23 @@ To replace each class centroid with ten training-only subcentroids while
 preserving the original two-centroid dataset, run:
 
 ```sh
-python3 scripts/data/expand_gse2034_representatives.py
+python3 scripts/data/expand_gse2034_centroids.py
 ```
 
-This writes `data/processed/gse2034_k10_v1/` with 20 representatives: ten
+This writes `data/processed/gse2034_k10_v1/` with 20 centroids: ten
 labeled relapse-free and ten labeled distant-metastasis. Each class is
 clustered independently with deterministic k-means++. The 256 highest-variance
-probe sets within that class's representative pool determine assignments, then
+probe sets within that class's training pool determine assignments, then
 each final subcentroid is recomputed over all 22,283 probe sets. Queries are
 hard-linked unchanged and never influence feature selection, clustering, or
-centroid construction. Use `--representatives-per-class`,
+centroid construction. Use `--centroids-per-class`,
 `--clustering-features`, and `--seed` for alternative expansions.
 
 GSE2034 preparation remains reproducible, but its exploratory sweep grids are
 not part of the six-setup public catalog. Create a version-two setup pointing
 at either processed directory when extending the biological validation.
 
-Use `--representative-fraction`, `--seed`, and `--output-dir` to create
+Use `--training-fraction`, `--seed`, and `--output-dir` to create
 additional independent splits. Do not use `--force` to rotate a split in place
 when the old split's report needs to remain reproducible; write a new processed
 directory and a matching setup instead.

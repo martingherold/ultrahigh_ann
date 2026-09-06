@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small schema-5 benchmark stand-in used by subprocess integration tests."""
+"""Small schema-6 benchmark stand-in used by subprocess integration tests."""
 
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ def approximation(agreement: float) -> dict[str, object]:
             }
             for epsilon in (0.001, 0.005, 0.01, 0.02, 0.05, 0.10)
         ],
-        "returned_representative_rank": distribution,
+        "returned_neighbor_rank": distribution,
         "by_multiplicative_margin": [],
     }
 
@@ -103,8 +103,8 @@ def result_run(
         "median_ms": elapsed_ms,
         "median_microseconds_per_query": query_us,
         "median_queries_per_second": 1_000_000.0 / query_us,
-        "exact_choice_agreement_count": round(agreement * 10),
-        "exact_choice_agreement": agreement,
+        "exact_neighbor_agreement_count": round(agreement * 10),
+        "exact_neighbor_agreement": agreement,
         "correct": round(accuracy * 10),
         "accuracy": accuracy,
         "label_agreement_with_exact": agreement,
@@ -146,9 +146,9 @@ cuda_enabled = any(
     parameters.get("backend", "cpu") == "cuda"
     for _, _, parameters in configured_runs
 )
-representatives_sha256 = "a" * 64
+reference_vectors_sha256 = "a" * 64
 report = {
-    "schema_version": 5,
+    "schema_version": 6,
     "generated_at_utc": "2026-01-01T00:00:00Z",
     "setup_file": str(setup_path),
     "provenance": {
@@ -206,15 +206,15 @@ report = {
     },
     "dataset": {
         "directory": "dataset",
-        "representatives_file": "dataset/representatives.npy",
-        "representative_labels_file": "dataset/representative_labels.npy",
+        "reference_vectors_file": "dataset/reference_vectors.npy",
+        "reference_labels_file": "dataset/reference_labels.npy",
         "queries_file": "dataset/queries.npy",
         "query_labels_file": "dataset/query_labels.npy",
-        "representatives_sha256": representatives_sha256,
-        "representative_labels_sha256": "b" * 64,
+        "reference_vectors_sha256": reference_vectors_sha256,
+        "reference_labels_sha256": "b" * 64,
         "queries_sha256": "c" * 64,
         "query_labels_sha256": "d" * 64,
-        "representative_count": 33,
+        "reference_vector_count": 33,
         "query_count_available": 10,
         "query_count_run": 10,
         "dimension": 100,
@@ -234,7 +234,7 @@ report = {
         "policy": "sequential",
         "source_file": None,
         "source_sha256": None,
-        "representatives_sha256": representatives_sha256,
+        "reference_vectors_sha256": reference_vectors_sha256,
         "build_ms": 12.5,
         "load_ms": 0.0,
         "coordinate_count": 100,

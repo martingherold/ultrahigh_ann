@@ -19,7 +19,7 @@ SCRIPT = (
     PROJECT_ROOT
     / "scripts"
     / "data"
-    / "expand_tcga_pancancer_representatives.py"
+    / "expand_tcga_pancancer_centroids.py"
 )
 
 
@@ -43,15 +43,15 @@ class ExpandTcgaPancancerRepresentativesTest(unittest.TestCase):
             dtype="<f4",
         )
         query_labels = np.asarray([3, 8], dtype="<u2")
-        np.save(directory / "representative_pool.npy", pool, allow_pickle=False)
+        np.save(directory / "training_pool.npy", pool, allow_pickle=False)
         np.save(
-            directory / "representative_pool_labels.npy",
+            directory / "training_pool_labels.npy",
             pool_labels,
             allow_pickle=False,
         )
         np.save(directory / "queries.npy", queries, allow_pickle=False)
         np.save(directory / "query_labels.npy", query_labels, allow_pickle=False)
-        with (directory / "representatives.csv").open(
+        with (directory / "reference_vectors.csv").open(
             "w", encoding="utf-8", newline=""
         ) as output:
             writer = csv.DictWriter(
@@ -97,7 +97,7 @@ class ExpandTcgaPancancerRepresentativesTest(unittest.TestCase):
                 str(source),
                 "--output-dir",
                 str(output),
-                "--representatives-per-class",
+                "--centroids-per-class",
                 "2",
                 "--clustering-features",
                 "2",
@@ -122,16 +122,16 @@ class ExpandTcgaPancancerRepresentativesTest(unittest.TestCase):
             result = self.run_script(source, output)
             self.assertEqual(result.returncode, 0, result.stderr)
 
-            representatives = np.load(
-                output / "representatives.npy", allow_pickle=False
+            reference_vectors = np.load(
+                output / "reference_vectors.npy", allow_pickle=False
             )
-            representative_labels = np.load(
-                output / "representative_labels.npy", allow_pickle=False
+            reference_labels = np.load(
+                output / "reference_labels.npy", allow_pickle=False
             )
-            self.assertEqual(representatives.shape, (4, 4))
-            self.assertEqual(representatives.dtype, np.dtype("<f4"))
+            self.assertEqual(reference_vectors.shape, (4, 4))
+            self.assertEqual(reference_vectors.dtype, np.dtype("<f4"))
             np.testing.assert_array_equal(
-                representative_labels,
+                reference_labels,
                 np.asarray([3, 3, 8, 8], dtype="<u2"),
             )
             expected_by_label = {
@@ -143,7 +143,7 @@ class ExpandTcgaPancancerRepresentativesTest(unittest.TestCase):
                 ),
             }
             for label, expected in expected_by_label.items():
-                actual = representatives[representative_labels == label]
+                actual = reference_vectors[reference_labels == label]
                 actual = actual[np.argsort(actual[:, 0])]
                 np.testing.assert_allclose(actual, expected)
 
@@ -151,7 +151,7 @@ class ExpandTcgaPancancerRepresentativesTest(unittest.TestCase):
                 np.load(output / "queries.npy", allow_pickle=False),
                 np.load(source / "queries.npy", allow_pickle=False),
             )
-            with (output / "representatives.csv").open(
+            with (output / "reference_vectors.csv").open(
                 encoding="utf-8", newline=""
             ) as source_file:
                 records = list(csv.DictReader(source_file))
@@ -163,11 +163,11 @@ class ExpandTcgaPancancerRepresentativesTest(unittest.TestCase):
             metadata = json.loads(
                 (output / "dataset.json").read_text(encoding="utf-8")
             )
-            self.assertEqual(metadata["representatives"]["shape"], [4, 4])
-            self.assertEqual(metadata["representatives"]["count_per_class"], 2)
-            self.assertIn("only representative_pool.npy", metadata["leakage_control"])
+            self.assertEqual(metadata["reference_vectors"]["shape"], [4, 4])
+            self.assertEqual(metadata["reference_vectors"]["count_per_class"], 2)
+            self.assertIn("only training_pool.npy", metadata["leakage_control"])
             self.assertTrue((output / "source_dataset.json").is_file())
-            self.assertFalse((output / "representative_pool.npy").exists())
+            self.assertFalse((output / "training_pool.npy").exists())
 
             second_result = self.run_script(source, output)
             self.assertNotEqual(second_result.returncode, 0)
@@ -186,7 +186,7 @@ class ExpandTcgaPancancerRepresentativesTest(unittest.TestCase):
                     str(source),
                     "--output-dir",
                     str(root / "expanded"),
-                    "--representatives-per-class",
+                    "--centroids-per-class",
                     "5",
                 ),
                 check=False,

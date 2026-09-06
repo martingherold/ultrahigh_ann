@@ -79,11 +79,11 @@ SAMPLE_TYPE_NAMES = {
 }
 
 CURRENT_OUTPUT_NAMES = {
-    "representative_pool.npy",
-    "representative_pool_labels.npy",
-    "representatives.npy",
-    "representative_labels.npy",
-    "representatives.csv",
+    "training_pool.npy",
+    "training_pool_labels.npy",
+    "reference_vectors.npy",
+    "reference_labels.npy",
+    "reference_vectors.csv",
     "queries.npy",
     "query_labels.npy",
     "samples.csv",
@@ -121,7 +121,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Convert the three TCGA Kidney STAR-FPKM matrices from "
-            "genes-by-samples TSV into representative and query matrices."
+            "genes-by-samples TSV into class-centroid and query matrices."
         )
     )
     parser.add_argument(
@@ -148,12 +148,12 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--representative-fraction",
+        "--training-fraction",
         type=float,
         default=0.70,
         help=(
             "fraction of participants used to construct the class "
-            "representatives (default: 0.70); the remainder are queries"
+            "centroids (default: 0.70); the remainder are queries"
         ),
     )
     parser.add_argument(
@@ -180,9 +180,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def validate_args(args: argparse.Namespace) -> tuple[str, ...]:
-    if not 0.0 < args.representative_fraction < 1.0:
+    if not 0.0 < args.training_fraction < 1.0:
         raise ValueError(
-            "--representative-fraction must be strictly between zero and one"
+            "--training-fraction must be strictly between zero and one"
         )
     if args.expected_features < 0:
         raise ValueError("--expected-features cannot be negative")
@@ -352,20 +352,20 @@ def assign_participant_roles(
         if len(participants) < 2:
             raise RuntimeError(
                 f"label {label} has fewer than two participants; cannot "
-                "construct a representative and retain an independent query"
+                "construct a centroid and retain an independent query"
             )
         random_engine.shuffle(participants)
-        representative_count = round(
+        reference_vector_count = round(
             len(participants) * representative_fraction
         )
-        representative_count = max(
+        reference_vector_count = max(
             1,
-            min(len(participants) - 1, representative_count),
+            min(len(participants) - 1, reference_vector_count),
         )
 
-        for participant in participants[:representative_count]:
-            participant_roles[participant] = "representative_pool"
-        for participant in participants[representative_count:]:
+        for participant in participants[:reference_vector_count]:
+            participant_roles[participant] = "training_pool"
+        for participant in participants[reference_vector_count:]:
             participant_roles[participant] = "query"
 
     return [participant_roles[sample.participant_id] for sample in samples]
@@ -433,13 +433,13 @@ def write_sample_major_subset(
         del output
 
 
-def write_centroid_representatives(
+def write_centroid_reference_vectors(
     feature_major: np.ndarray,
     samples: list[Sample],
-    representative_pool_indices: np.ndarray,
+    training_pool_indices: np.ndarray,
     path: Path,
 ) -> None:
-    representatives = np.lib.format.open_memmap(
+    reference_vectors = np.lib.format.open_memmap(
         path,
         mode="w+",
         dtype=np.dtype("<f4"),
@@ -451,14 +451,14 @@ def write_centroid_representatives(
             cohort_indices = np.asarray(
                 [
                     index
-                    for index in representative_pool_indices
+                    for index in training_pool_indices
                     if samples[int(index)].label == cohort.label
                 ],
                 dtype=np.intp,
             )
             if not len(cohort_indices):
                 raise RuntimeError(
-                    f"representative pool is empty for {cohort.project_id}"
+                    f"training pool is empty for {cohort.project_id}"
                 )
             for start in range(
                 0, feature_major.shape[0], CENTROID_BLOCK_FEATURES
@@ -468,14 +468,14 @@ def write_centroid_representatives(
                     feature_major.shape[0],
                 )
                 values = feature_major[start:end, cohort_indices]
-                representatives[cohort.label, start:end] = np.mean(
+                reference_vectors[cohort.label, start:end] = np.mean(
                     values,
                     axis=1,
                     dtype=np.float64,
                 )
-        representatives.flush()
+        reference_vectors.flush()
     finally:
-        del representatives
+        del reference_vectors
 
 
 def convert_expression_matrix(
@@ -558,26 +558,26 @@ def convert_expression_matrix(
             )
 
         feature_major.flush()
-        representative_pool_indices = indices_for_role(
-            roles, "representative_pool"
+        training_pool_indices = indices_for_role(
+            roles, "training_pool"
         )
         query_indices = indices_for_role(roles, "query")
-        print("Writing sample-major representative and query data...", flush=True)
+        print("Writing sample-major centroid and query data...", flush=True)
         write_sample_major_subset(
             feature_major,
-            representative_pool_indices,
-            staging_dir / "representative_pool.npy",
+            training_pool_indices,
+            staging_dir / "training_pool.npy",
         )
         write_sample_major_subset(
             feature_major,
             query_indices,
             staging_dir / "queries.npy",
         )
-        write_centroid_representatives(
+        write_centroid_reference_vectors(
             feature_major,
             samples,
-            representative_pool_indices,
-            staging_dir / "representatives.npy",
+            training_pool_indices,
+            staging_dir / "reference_vectors.npy",
         )
     finally:
         del feature_major
@@ -599,7 +599,7 @@ def write_labels(
     np.save(path, labels, allow_pickle=False)
 
 
-def write_representative_labels(path: Path) -> None:
+def write_reference_labels(path: Path) -> None:
     labels = np.asarray(
         [cohort.label for cohort in COHORTS],
         dtype=np.dtype("<u2"),
@@ -627,7 +627,7 @@ def write_samples(
         )
         writer = csv.DictWriter(output, fieldnames=fieldnames)
         writer.writeheader()
-        next_role_row = {"representative_pool": 0, "query": 0}
+        next_role_row = {"training_pool": 0, "query": 0}
         for sample, role in zip(samples, roles, strict=True):
             role_row_index = next_role_row[role]
             next_role_row[role] += 1
@@ -647,7 +647,7 @@ def write_samples(
             )
 
 
-def write_representatives(
+def write_reference_vectors(
     path: Path,
     samples: list[Sample],
     roles: list[str],
@@ -668,7 +668,7 @@ def write_representatives(
             pool_samples = [
                 sample
                 for sample, role in zip(samples, roles, strict=True)
-                if role == "representative_pool" and sample.label == cohort.label
+                if role == "training_pool" and sample.label == cohort.label
             ]
             writer.writerow(
                 {
@@ -743,21 +743,21 @@ def build_dataset_metadata(
         for sample, role in zip(samples, roles, strict=True)
     }
     participant_roles = [role for _, role in participant_role_pairs]
-    representative_pool_count = roles.count("representative_pool")
+    training_pool_count = roles.count("training_pool")
     query_count = roles.count("query")
 
     return {
         "dataset_name": "TCGA Kidney Cancers",
-        "format_version": 2,
+        "format_version": 3,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "matrices": {
-            "representative_pool": {
-                "file": "representative_pool.npy",
-                "shape": [representative_pool_count, feature_count],
-                "purpose": "samples used to construct representatives",
+            "training_pool": {
+                "file": "training_pool.npy",
+                "shape": [training_pool_count, feature_count],
+                "purpose": "samples used to construct centroids",
             },
-            "representatives": {
-                "file": "representatives.npy",
+            "reference_vectors": {
+                "file": "reference_vectors.npy",
                 "shape": [len(COHORTS), feature_count],
                 "purpose": "one arithmetic-mean centroid per cancer subtype",
             },
@@ -775,18 +775,18 @@ def build_dataset_metadata(
             },
         },
         "labels": {
-            "representative_file": "representative_labels.npy",
-            "representative_pool_file": "representative_pool_labels.npy",
+            "reference_file": "reference_labels.npy",
+            "training_pool_file": "training_pool_labels.npy",
             "query_file": "query_labels.npy",
             "dtype": "uint16",
             "mapping": {
                 str(cohort.label): cohort.project_id for cohort in COHORTS
             },
         },
-        "representative_construction": {
-            "metadata_file": "representatives.csv",
+        "reference_vector_construction": {
+            "metadata_file": "reference_vectors.csv",
             "method": "arithmetic_mean_centroid",
-            "source": "representative_pool.npy",
+            "source": "training_pool.npy",
             "count_per_project": 1,
         },
         "features": {
@@ -817,8 +817,8 @@ def build_dataset_metadata(
             "stratified_by": "project_id",
             "seed": args.seed,
             "requested_fractions": {
-                "representative_pool": args.representative_fraction,
-                "query": 1.0 - args.representative_fraction,
+                "training_pool": args.training_fraction,
+                "query": 1.0 - args.training_fraction,
             },
             "participant_counts": count_by(participant_roles),
         },
@@ -827,7 +827,7 @@ def build_dataset_metadata(
             "transpose source matrices from features_by_samples to samples_by_features",
             "convert finite expression values to float32",
             "construct one arithmetic-mean centroid per project from the "
-            "representative pool",
+            "training pool",
         ],
         "normalization": "none beyond source log2(FPKM+1) values",
         "numpy_version": np.__version__,
@@ -888,17 +888,17 @@ def main() -> int:
 
         roles = assign_participant_roles(
             samples,
-            args.representative_fraction,
+            args.training_fraction,
             args.seed,
         )
-        representative_pool_indices = indices_for_role(
-            roles, "representative_pool"
+        training_pool_indices = indices_for_role(
+            roles, "training_pool"
         )
         query_indices = indices_for_role(roles, "query")
 
         print(
             f"Retained {len(samples):,} samples: "
-            f"{len(representative_pool_indices):,} in the representative "
+            f"{len(training_pool_indices):,} in the training "
             f"pool and {len(query_indices):,} queries; expect "
             f"{feature_count:,} features.",
             flush=True,
@@ -917,12 +917,12 @@ def main() -> int:
                 staging_dir,
             )
             write_labels(
-                staging_dir / "representative_pool_labels.npy",
+                staging_dir / "training_pool_labels.npy",
                 samples,
-                representative_pool_indices,
+                training_pool_indices,
             )
-            write_representative_labels(
-                staging_dir / "representative_labels.npy"
+            write_reference_labels(
+                staging_dir / "reference_labels.npy"
             )
             write_labels(
                 staging_dir / "query_labels.npy",
@@ -930,8 +930,8 @@ def main() -> int:
                 query_indices,
             )
             write_samples(staging_dir / "samples.csv", samples, roles)
-            write_representatives(
-                staging_dir / "representatives.csv", samples, roles
+            write_reference_vectors(
+                staging_dir / "reference_vectors.csv", samples, roles
             )
             write_features(staging_dir / "features.csv", feature_ids)
 
@@ -968,7 +968,7 @@ def main() -> int:
         return 1
 
     print(
-        f"Saved {len(COHORTS)} representatives and "
+        f"Saved {len(COHORTS)} class centroids and "
         f"{len(query_indices):,} queries with {feature_count:,} features to "
         f"{output_dir}.",
         flush=True,

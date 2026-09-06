@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.20)
 project(
     ultrahigh_ann
     VERSION 0.2.0
-    DESCRIPTION "Sublinear coordinate acquisition for nearest-representative search"
+    DESCRIPTION "Sublinear coordinate acquisition for nearest-neighbor search"
     LANGUAGES CXX
 )
 
@@ -60,7 +60,7 @@ endif()
 
 option(
     ULTRAHIGH_ANN_BUILD_BENCHMARKS
-    "Build the unified nearest-representative benchmark executable"
+    "Build the unified nearest-neighbor benchmark executable"
     "${ULTRAHIGH_ANN_BUILD_BENCHMARKS_DEFAULT}"
 )
 unset(ULTRAHIGH_ANN_BUILD_BENCHMARKS_DEFAULT)
@@ -209,21 +209,21 @@ if(ULTRAHIGH_ANN_BUILD_BENCHMARKS)
     )
 
     add_executable(
-        nearest_representative_benchmark
+        nearest_neighbor_benchmark
         src/benchmarks/benchmark_dataset.cpp
         src/benchmarks/benchmark_metrics.cpp
         src/benchmarks/benchmark_setup.cpp
-        src/benchmarks/nearest_representative_benchmark.cpp
+        src/benchmarks/nearest_neighbor_benchmark.cpp
     )
 
     target_link_libraries(
-        nearest_representative_benchmark
+        nearest_neighbor_benchmark
         PRIVATE
             ultrahigh_ann
     )
 
     target_include_directories(
-        nearest_representative_benchmark
+        nearest_neighbor_benchmark
         PRIVATE
             "${CMAKE_CURRENT_BINARY_DIR}/generated"
     )

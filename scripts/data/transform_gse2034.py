@@ -44,15 +44,15 @@ DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "processed" / "gse2034_v1"
 HASH_BLOCK_SIZE = 1024 * 1024
 LABEL_NAMES = {0: "relapse_free", 1: "distant_metastasis"}
 MANAGED_OUTPUT_NAMES = {
-    "representatives.npy",
-    "representative_labels.npy",
-    "representative_pool.npy",
-    "representative_pool_labels.npy",
+    "reference_vectors.npy",
+    "reference_labels.npy",
+    "training_pool.npy",
+    "training_pool_labels.npy",
     "queries.npy",
     "query_labels.npy",
     "normalization_mean.npy",
     "normalization_scale.npy",
-    "representatives.csv",
+    "reference_vectors.csv",
     "samples.csv",
     "features.csv",
     "dataset.json",
@@ -65,7 +65,7 @@ def parse_args() -> argparse.Namespace:
         description=(
             "Join the official GSE2034 expression and clinical tables, make "
             "a stratified held-out split, fit log2/z-score preprocessing only "
-            "on the representative pool, and construct one centroid per class."
+            "on the training pool, and construct one centroid per class."
         )
     )
     parser.add_argument(
@@ -81,7 +81,7 @@ def parse_args() -> argparse.Namespace:
         help=f"destination directory (default: {DEFAULT_OUTPUT_DIR})",
     )
     parser.add_argument(
-        "--representative-fraction",
+        "--training-fraction",
         type=float,
         default=0.70,
         help=(
@@ -134,9 +134,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def validate_args(args: argparse.Namespace) -> None:
-    if not 0.0 < args.representative_fraction < 1.0:
+    if not 0.0 < args.training_fraction < 1.0:
         raise ValueError(
-            "--representative-fraction must be strictly between zero and one"
+            "--training-fraction must be strictly between zero and one"
         )
     if args.expected_samples < 2:
         raise ValueError("--expected-samples must be at least two")
@@ -340,7 +340,7 @@ def write_samples(
         for source_column, geo_accession in enumerate(sample_accessions):
             clinical = clinical_by_accession[geo_accession]
             if source_column in pool_rows:
-                role = "representative_pool"
+                role = "training_pool"
                 role_row = pool_rows[source_column]
             else:
                 role = "query"
@@ -369,7 +369,7 @@ def write_features(path: Path, feature_ids: tuple[str, ...]) -> None:
         writer.writerows(enumerate(feature_ids))
 
 
-def write_representatives(
+def write_reference_vectors(
     path: Path,
     labels: np.ndarray,
     pool_indices: np.ndarray,
@@ -379,7 +379,7 @@ def write_representatives(
         writer = csv.writer(output)
         writer.writerow(
             (
-                "representative_row",
+                "reference_vector_row",
                 "label",
                 "outcome",
                 "construction",
@@ -438,16 +438,16 @@ def build_dataset_metadata(
     }
     return {
         "dataset_name": "GSE2034 stratified relapse benchmark",
-        "format_version": 1,
+        "format_version": 2,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "matrices": {
-            "representatives": {
-                "file": "representatives.npy",
+            "reference_vectors": {
+                "file": "reference_vectors.npy",
                 "shape": [2, dimensions],
                 "purpose": "one training-only centroid per outcome class",
             },
-            "representative_pool": {
-                "file": "representative_pool.npy",
+            "training_pool": {
+                "file": "training_pool.npy",
                 "shape": [len(pool_indices), dimensions],
                 "purpose": "samples used to fit preprocessing and centroids",
             },
@@ -465,8 +465,8 @@ def build_dataset_metadata(
             },
         },
         "labels": {
-            "representative_file": "representative_labels.npy",
-            "representative_pool_file": "representative_pool_labels.npy",
+            "reference_file": "reference_labels.npy",
+            "training_pool_file": "training_pool_labels.npy",
             "query_file": "query_labels.npy",
             "dtype": "uint16",
             "mapping": {str(label): name for label, name in LABEL_NAMES.items()},
@@ -475,31 +475,31 @@ def build_dataset_metadata(
         "split": {
             "policy": "stratified random holdout by clinical outcome",
             "seed": args.seed,
-            "requested_representative_fraction": args.representative_fraction,
-            "representative_pool_count": len(pool_indices),
+            "requested_training_fraction": args.training_fraction,
+            "training_pool_count": len(pool_indices),
             "query_count": len(query_indices),
-            "representative_pool_counts_by_class": class_counts(
+            "training_pool_counts_by_class": class_counts(
                 labels,
                 pool_indices,
             ),
             "query_counts_by_class": class_counts(labels, query_indices),
             "leakage_control": (
                 "split precedes preprocessing; normalization statistics and "
-                "class centroids use only representative-pool rows"
+                "class centroids use only training-pool rows"
             ),
         },
         "normalization": {
             "method": "log2(x+1), then per-probe population z-score",
-            "fit_rows": "representative_pool only",
+            "fit_rows": "training_pool only",
             "mean_file": "normalization_mean.npy",
             "scale_file": "normalization_scale.npy",
             "zero_variance_probe_sets": constant_feature_count,
             "zero_variance_policy": "retain the probe set and use scale 1",
         },
-        "representative_construction": {
+        "reference_vector_construction": {
             "method": "arithmetic_mean_centroid",
             "count_per_class": 1,
-            "metadata_file": "representatives.csv",
+            "metadata_file": "reference_vectors.csv",
         },
         "features": {
             "file": "features.csv",
@@ -516,7 +516,7 @@ def build_dataset_metadata(
             "join patient outcomes to expression columns by GSM accession",
             "make a seeded stratified 70/30-style holdout split",
             "apply log2(x+1) to processed GEO expression values",
-            "fit per-probe means and scales on representative-pool rows only",
+            "fit per-probe means and scales on training-pool rows only",
             "apply those training-only z-scores to pool and query rows",
             "construct one arithmetic-mean centroid per outcome class",
         ],
@@ -592,11 +592,11 @@ def main() -> int:
 
         pool_indices, query_indices = stratified_split(
             labels,
-            args.representative_fraction,
+            args.training_fraction,
             args.seed,
         )
         print(
-            f"Fitting preprocessing on {len(pool_indices)} representative-pool "
+            f"Fitting preprocessing on {len(pool_indices)} training-pool "
             f"samples; holding out {len(query_indices)} queries...",
             flush=True,
         )
@@ -604,7 +604,7 @@ def main() -> int:
             matrix,
             pool_indices,
         )
-        representative_pool = np.ascontiguousarray(
+        training_pool = np.ascontiguousarray(
             matrix[pool_indices],
             dtype="<f4",
         )
@@ -614,16 +614,16 @@ def main() -> int:
             labels[query_indices],
             dtype="<u2",
         )
-        representatives = np.stack(
+        reference_vectors = np.stack(
             [
-                representative_pool[pool_labels == label].mean(
+                training_pool[pool_labels == label].mean(
                     axis=0,
                     dtype=np.float64,
                 )
                 for label in sorted(LABEL_NAMES)
             ]
         ).astype("<f4")
-        representative_labels = np.asarray(sorted(LABEL_NAMES), dtype="<u2")
+        reference_labels = np.asarray(sorted(LABEL_NAMES), dtype="<u2")
 
         output_dir.mkdir(parents=True, exist_ok=True)
         existing = sorted(
@@ -645,22 +645,22 @@ def main() -> int:
         ) as temporary_directory:
             staging_dir = Path(temporary_directory)
             save_array(
-                staging_dir / "representatives.npy",
-                representatives,
+                staging_dir / "reference_vectors.npy",
+                reference_vectors,
                 "<f4",
             )
             save_array(
-                staging_dir / "representative_labels.npy",
-                representative_labels,
+                staging_dir / "reference_labels.npy",
+                reference_labels,
                 "<u2",
             )
             save_array(
-                staging_dir / "representative_pool.npy",
-                representative_pool,
+                staging_dir / "training_pool.npy",
+                training_pool,
                 "<f4",
             )
             save_array(
-                staging_dir / "representative_pool_labels.npy",
+                staging_dir / "training_pool_labels.npy",
                 pool_labels,
                 "<u2",
             )
@@ -680,8 +680,8 @@ def main() -> int:
                 query_indices,
             )
             write_features(staging_dir / "features.csv", feature_ids)
-            write_representatives(
-                staging_dir / "representatives.csv",
+            write_reference_vectors(
+                staging_dir / "reference_vectors.csv",
                 labels,
                 pool_indices,
             )
@@ -726,7 +726,7 @@ def main() -> int:
         return 1
 
     print(
-        f"Saved 2 representatives and {len(query_indices)} queries with "
+        f"Saved 2 class centroids and {len(query_indices)} queries with "
         f"{args.expected_features:,} dimensions to {output_dir}.",
         flush=True,
     )

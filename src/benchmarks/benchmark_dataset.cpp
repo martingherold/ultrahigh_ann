@@ -27,7 +27,7 @@ LoadedBenchmarkDataset load_benchmark_dataset(const BenchmarkSetup& setup)
         std::filesystem::is_regular_file(setup.query_labels_path);
     if (representative_labels_exist != query_labels_exist) {
         throw std::runtime_error(
-            "representative and query labels must either both exist or both "
+            "reference-vector and query labels must either both exist or both "
             "be absent");
     }
 
@@ -54,7 +54,7 @@ LoadedBenchmarkDataset load_benchmark_dataset(const BenchmarkSetup& setup)
         dataset.representatives.cols() == 0 || dataset.queries.rows() == 0 ||
         dataset.representatives.cols() != dataset.queries.cols()) {
         throw std::runtime_error(
-            "representatives and queries must be nonempty matrices with the "
+            "reference vectors and queries must be nonempty matrices with the "
             "same dimension");
     }
     if (representative_labels_exist) {

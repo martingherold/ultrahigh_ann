@@ -122,29 +122,29 @@ class TransformTcgaPancancerTest(unittest.TestCase):
             result = self.run_transform(raw, output)
             self.assertEqual(result.returncode, 0, result.stderr)
 
-            representatives = np.load(
-                output / "representatives.npy",
+            reference_vectors = np.load(
+                output / "reference_vectors.npy",
                 allow_pickle=False,
             )
             queries = np.load(output / "queries.npy", allow_pickle=False)
-            representative_labels = np.load(
-                output / "representative_labels.npy",
+            reference_labels = np.load(
+                output / "reference_labels.npy",
                 allow_pickle=False,
             )
             query_labels = np.load(
                 output / "query_labels.npy",
                 allow_pickle=False,
             )
-            self.assertEqual(representatives.shape, (33, 3))
+            self.assertEqual(reference_vectors.shape, (33, 3))
             self.assertEqual(queries.shape, (33, 3))
-            self.assertEqual(representative_labels.shape, (33,))
+            self.assertEqual(reference_labels.shape, (33,))
             self.assertEqual(query_labels.shape, (33,))
-            self.assertEqual(representatives.dtype, np.dtype("<f4"))
+            self.assertEqual(reference_vectors.dtype, np.dtype("<f4"))
             self.assertEqual(queries.dtype, np.dtype("<f4"))
-            self.assertEqual(representative_labels.dtype, np.dtype("<u2"))
+            self.assertEqual(reference_labels.dtype, np.dtype("<u2"))
             self.assertEqual(query_labels.dtype, np.dtype("<u2"))
             np.testing.assert_array_equal(
-                representative_labels,
+                reference_labels,
                 np.asarray(
                     [cohort.label for cohort in DOWNLOAD_MODULE.COHORTS],
                     dtype=np.dtype("<u2"),
@@ -152,12 +152,12 @@ class TransformTcgaPancancerTest(unittest.TestCase):
             )
             self.assertTrue(
                 set(int(label) for label in np.unique(query_labels)).issubset(
-                    set(int(label) for label in representative_labels)
+                    set(int(label) for label in reference_labels)
                 )
             )
-            self.assertTrue(representatives.flags.c_contiguous)
+            self.assertTrue(reference_vectors.flags.c_contiguous)
             self.assertTrue(queries.flags.c_contiguous)
-            self.assertFalse((output / "representative_pool.npy").exists())
+            self.assertFalse((output / "training_pool.npy").exists())
 
             with (output / "samples.csv").open(
                 encoding="utf-8",
@@ -190,13 +190,13 @@ class TransformTcgaPancancerTest(unittest.TestCase):
                     np.testing.assert_array_equal(queries[role_row], expected)
                     self.assertEqual(query_labels[role_row], label)
                 else:
-                    np.testing.assert_array_equal(representatives[label], expected)
+                    np.testing.assert_array_equal(reference_vectors[label], expected)
 
             metadata = json.loads(
                 (output / "dataset.json").read_text(encoding="utf-8")
             )
             self.assertEqual(
-                metadata["matrices"]["representatives"]["shape"],
+                metadata["matrices"]["reference_vectors"]["shape"],
                 [33, 3],
             )
             self.assertEqual(
@@ -204,11 +204,11 @@ class TransformTcgaPancancerTest(unittest.TestCase):
                 [33, 3],
             )
             self.assertEqual(
-                metadata["labels"]["representative_file"],
-                "representative_labels.npy",
+                metadata["labels"]["reference_file"],
+                "reference_labels.npy",
             )
             self.assertIn(
-                "representative_labels.npy",
+                "reference_labels.npy",
                 metadata["generated_files"],
             )
             self.assertEqual(
@@ -217,7 +217,7 @@ class TransformTcgaPancancerTest(unittest.TestCase):
                 ["03"],
             )
             self.assertFalse(
-                metadata["representative_construction"]
+                metadata["reference_vector_construction"]
                 ["pool_matrix_materialized"]
             )
             self.assertEqual(
@@ -233,7 +233,7 @@ class TransformTcgaPancancerTest(unittest.TestCase):
             self.assertNotEqual(second_result.returncode, 0)
             self.assertIn("Refusing to overwrite", second_result.stderr)
 
-    def test_optionally_materializes_representative_pool(self) -> None:
+    def test_optionally_materializes_training_pool(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             raw = root / "raw"
@@ -244,15 +244,15 @@ class TransformTcgaPancancerTest(unittest.TestCase):
             result = self.run_transform(
                 raw,
                 output,
-                "--write-representative-pool",
+                "--write-training-pool",
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             pool = np.load(
-                output / "representative_pool.npy",
+                output / "training_pool.npy",
                 allow_pickle=False,
             )
             pool_labels = np.load(
-                output / "representative_pool_labels.npy",
+                output / "training_pool_labels.npy",
                 allow_pickle=False,
             )
             self.assertEqual(pool.shape, (33, 3))
@@ -264,7 +264,7 @@ class TransformTcgaPancancerTest(unittest.TestCase):
             ) as source:
                 samples = list(csv.DictReader(source))
             for sample in samples:
-                if sample["role"] != "representative_pool":
+                if sample["role"] != "training_pool":
                     continue
                 row = int(sample["role_row_index"])
                 np.testing.assert_array_equal(

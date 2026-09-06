@@ -101,7 +101,7 @@ jobs:
       - name: Validate public CUDA setups
         run: |
           for setup in experiments/tcga_pancancer/cuda/*.tsv; do
-            ./build-cuda/nearest_representative_benchmark \
+            ./build-cuda/nearest_neighbor_benchmark \
               --setup "$setup" --validate-only
           done
 

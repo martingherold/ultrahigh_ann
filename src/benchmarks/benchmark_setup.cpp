@@ -172,7 +172,7 @@ parse_parameter(std::string_view field, const std::filesystem::path& path,
     if (value == "parallel_queries") {
         return QueryStrategy::parallel_queries;
     }
-    if (value == "parallel_representatives") {
+    if (value == "parallel_reference_vectors") {
         return QueryStrategy::parallel_representatives;
     }
     if (value == "automatic") {
@@ -410,7 +410,7 @@ std::string_view strategy_name(QueryStrategy value) noexcept
     case QueryStrategy::parallel_queries:
         return "parallel_queries";
     case QueryStrategy::parallel_representatives:
-        return "parallel_representatives";
+        return "parallel_reference_vectors";
     case QueryStrategy::automatic:
         return "automatic";
     case QueryStrategy::direct:
@@ -601,9 +601,9 @@ BenchmarkSetup load_benchmark_setup(const std::filesystem::path& input_path)
                    : (setup.dataset_directory / configured).lexically_normal();
     };
     setup.representatives_path =
-        dataset_file("representatives_file", "representatives.npy");
+        dataset_file("reference_vectors_file", "reference_vectors.npy");
     setup.representative_labels_path =
-        dataset_file("representative_labels_file", "representative_labels.npy");
+        dataset_file("reference_labels_file", "reference_labels.npy");
     setup.queries_path = dataset_file("queries_file", "queries.npy");
     setup.query_labels_path =
         dataset_file("query_labels_file", "query_labels.npy");
@@ -622,8 +622,8 @@ BenchmarkSetup load_benchmark_setup(const std::filesystem::path& input_path)
         "diagnostics",
         "probability_policy",
         "probabilities",
-        "representatives_file",
-        "representative_labels_file",
+        "reference_vectors_file",
+        "reference_labels_file",
         "queries_file",
         "query_labels_file"};
     for (const auto& [key, configured] : directives) {

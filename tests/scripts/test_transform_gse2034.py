@@ -106,7 +106,7 @@ class TransformGse2034Test(unittest.TestCase):
                 "3",
                 "--expected-relapse",
                 "3",
-                "--representative-fraction",
+                "--training-fraction",
                 "0.67",
                 "--seed",
                 "42",
@@ -129,17 +129,17 @@ class TransformGse2034Test(unittest.TestCase):
             result = self.run_transform(raw, output)
             self.assertEqual(result.returncode, 0, result.stderr)
 
-            representatives = np.load(
-                output / "representatives.npy",
+            reference_vectors = np.load(
+                output / "reference_vectors.npy",
                 allow_pickle=False,
             )
-            representative_labels = np.load(
-                output / "representative_labels.npy",
+            reference_labels = np.load(
+                output / "reference_labels.npy",
                 allow_pickle=False,
             )
-            pool = np.load(output / "representative_pool.npy", allow_pickle=False)
+            pool = np.load(output / "training_pool.npy", allow_pickle=False)
             pool_labels = np.load(
-                output / "representative_pool_labels.npy",
+                output / "training_pool_labels.npy",
                 allow_pickle=False,
             )
             queries = np.load(output / "queries.npy", allow_pickle=False)
@@ -147,16 +147,16 @@ class TransformGse2034Test(unittest.TestCase):
                 output / "query_labels.npy",
                 allow_pickle=False,
             )
-            self.assertEqual(representatives.shape, (2, 4))
+            self.assertEqual(reference_vectors.shape, (2, 4))
             self.assertEqual(pool.shape, (4, 4))
             self.assertEqual(queries.shape, (2, 4))
-            self.assertEqual(representatives.dtype, np.dtype("<f4"))
+            self.assertEqual(reference_vectors.dtype, np.dtype("<f4"))
             self.assertEqual(query_labels.dtype, np.dtype("<u2"))
-            np.testing.assert_array_equal(representative_labels, (0, 1))
+            np.testing.assert_array_equal(reference_labels, (0, 1))
             self.assertEqual(sorted(query_labels.tolist()), [0, 1])
             for label in (0, 1):
                 np.testing.assert_allclose(
-                    representatives[label],
+                    reference_vectors[label],
                     pool[pool_labels == label].mean(axis=0),
                     rtol=0.0,
                     atol=1e-6,
@@ -170,7 +170,7 @@ class TransformGse2034Test(unittest.TestCase):
             pool_source_columns = [
                 int(row["source_column"])
                 for row in sample_rows
-                if row["role"] == "representative_pool"
+                if row["role"] == "training_pool"
             ]
             logged = np.log2(source_values + 1.0)
             expected_mean = logged[pool_source_columns].mean(
@@ -197,11 +197,11 @@ class TransformGse2034Test(unittest.TestCase):
             metadata = json.loads(
                 (output / "dataset.json").read_text(encoding="utf-8")
             )
-            self.assertEqual(metadata["split"]["representative_pool_count"], 4)
+            self.assertEqual(metadata["split"]["training_pool_count"], 4)
             self.assertEqual(metadata["split"]["query_count"], 2)
             self.assertEqual(
                 metadata["normalization"]["fit_rows"],
-                "representative_pool only",
+                "training_pool only",
             )
             self.assertEqual(
                 json.loads(

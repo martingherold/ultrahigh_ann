@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for joining compatible schema-version 5 checkpoint reports."""
+"""Tests for joining compatible schema-version 6 checkpoint reports."""
 
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+from test_benchmark_schema import validate_report_provenance
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -54,8 +56,8 @@ def exact_run(elapsed_ms: float, build_ms: float) -> dict[str, object]:
                 "median_queries_per_second": (
                     query_count * 1000.0 / elapsed_ms
                 ),
-                "exact_choice_agreement_count": query_count,
-                "exact_choice_agreement": 1.0,
+                "exact_neighbor_agreement_count": query_count,
+                "exact_neighbor_agreement": 1.0,
                 "correct": 9,
                 "accuracy": 0.9,
                 "label_agreement_with_exact": 1.0,
@@ -75,9 +77,9 @@ def write_checkpoint(
 ) -> Path:
     report_path = root / f"{stem}.json"
     csv_path = root / f"{stem}.csv"
-    representatives_sha256 = "a" * 64
+    reference_vectors_sha256 = "a" * 64
     report = {
-        "schema_version": 5,
+        "schema_version": 6,
         "generated_at_utc": "2026-09-06T00:00:00Z",
         "setup_file": f"experiments/{stem}.tsv",
         "provenance": {
@@ -131,11 +133,11 @@ def write_checkpoint(
         },
         "dataset": {
             "directory": "/tmp/fixture_dataset",
-            "representatives_sha256": representatives_sha256,
-            "representative_labels_sha256": "b" * 64,
+            "reference_vectors_sha256": reference_vectors_sha256,
+            "reference_labels_sha256": "b" * 64,
             "queries_sha256": "c" * 64,
             "query_labels_sha256": "d" * 64,
-            "representative_count": 33,
+            "reference_vector_count": 33,
             "query_count_available": 10,
             "query_count_run": 10,
             "dimension": dimension,
@@ -154,7 +156,7 @@ def write_checkpoint(
             "policy": "load",
             "source_file": "/tmp/probabilities.txt",
             "source_sha256": "e" * 64,
-            "representatives_sha256": representatives_sha256,
+            "reference_vectors_sha256": reference_vectors_sha256,
             "coordinate_count": dimension,
             "sampling_mass": 1.0,
             "build_ms": 3.0,
@@ -235,6 +237,7 @@ class JoinBenchmarkReportsTest(unittest.TestCase):
 
             self.assertEqual(completed.returncode, 0, completed.stderr)
             joined = json.loads(output.read_text(encoding="utf-8"))
+            validate_report_provenance(joined)
             self.assertEqual(
                 [run["name"] for run in joined["runs"]],
                 ["exact_cuda_direct", "flat_b", "flat_a"],

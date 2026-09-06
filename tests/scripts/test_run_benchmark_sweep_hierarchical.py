@@ -14,7 +14,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = PROJECT_ROOT / "scripts" / "benchmark" / "run_benchmark_sweep.py"
-FAKE_BENCHMARK_SOURCE = PROJECT_ROOT / "tests" / "scripts" / "fake_schema5_benchmark.py"
+FAKE_BENCHMARK_SOURCE = PROJECT_ROOT / "tests" / "scripts" / "fake_schema6_benchmark.py"
 
 
 class RunBenchmarkSweepHierarchicalTest(unittest.TestCase):

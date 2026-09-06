@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Join compatible schema-version 5 benchmark checkpoint reports."""
+"""Join compatible schema-version 6 benchmark checkpoint reports."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "scripts" / "benchmark"))
 from benchmark_reporting import validate_report_provenance  # noqa: E402
 
 
-REPORT_SCHEMA_VERSION = 5
+REPORT_SCHEMA_VERSION = 6
 REFERENCE_TIMING_FIELDS = {
     "trial_ms",
     "median_ms",
@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Join independently completed benchmark checkpoints into one "
-            "schema-version 5 JSON/CSV pair for reporting and figures."
+            "schema-version 6 JSON/CSV pair for reporting and figures."
         )
     )
     parser.add_argument(

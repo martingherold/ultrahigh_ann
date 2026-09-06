@@ -23,13 +23,13 @@ struct RepresentativeQueryDataset {
 [[nodiscard]] std::vector<std::size_t> load_label_vector_npy(
     const std::filesystem::path& path);
 
-// Load only representatives.npy from a transformed dataset directory.
+// Load only reference_vectors.npy from a transformed dataset directory.
 [[nodiscard]] DenseMatrix load_representative_matrix(
     const std::filesystem::path& directory);
 
 // Load files produced by the dataset transforms. This library convenience
-// loader retains the legacy row-index fallback when representative_labels.npy
-// is absent. The benchmark uses a stricter paired-label contract for quality
+// loader uses row indices as labels when reference_labels.npy is absent.
+// The benchmark uses a stricter paired-label contract for quality
 // metrics.
 [[nodiscard]] RepresentativeQueryDataset
 load_representative_query_dataset(

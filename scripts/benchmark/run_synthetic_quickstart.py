@@ -12,7 +12,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_GENERATOR = PROJECT_ROOT / "scripts" / "data" / "generate_synthetic_dataset.py"
-DEFAULT_BENCHMARK = PROJECT_ROOT / "build" / "nearest_representative_benchmark"
+DEFAULT_BENCHMARK = PROJECT_ROOT / "build" / "nearest_neighbor_benchmark"
 DEFAULT_SETUP = (
     PROJECT_ROOT / "experiments" / "synthetic" / "synthetic_quickstart_l2.tsv"
 )
@@ -21,8 +21,8 @@ DEFAULT_FIGURE_SCRIPT = (
 )
 FORMAT_HEADER = "ultrahigh_ann_benchmark_setup_v2"
 REQUIRED_DATASET_FILES = {
-    "representatives.npy",
-    "representative_labels.npy",
+    "reference_vectors.npy",
+    "reference_labels.npy",
     "queries.npy",
     "query_labels.npy",
     "dataset.json",
@@ -67,7 +67,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--figures",
         action="store_true",
-        help="create the latency/fidelity Pareto figure after the benchmark",
+        help="plot query latency versus agreement with exact search",
     )
     parser.add_argument(
         "--dry-run",

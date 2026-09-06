@@ -1,4 +1,4 @@
-# Numerical audit of both CUDA L2 query paths on the 33 TCGA representatives.
+# Numerical audit of both CUDA L2 query paths on the 33 TCGA class centroids.
 # CPU binary64 predictions are the reference. No sampled index or probability
 # model is involved, so agreement differences isolate query arithmetic.
 ultrahigh_ann_benchmark_setup_v2

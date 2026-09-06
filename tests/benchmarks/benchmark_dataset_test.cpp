@@ -130,9 +130,9 @@ int main()
 {
     const TemporaryDirectory directory;
     ultrahigh_ann::benchmark::BenchmarkSetup setup;
-    setup.representatives_path = directory.path() / "representatives.npy";
+    setup.representatives_path = directory.path() / "reference_vectors.npy";
     setup.representative_labels_path =
-        directory.path() / "representative_labels.npy";
+        directory.path() / "reference_labels.npy";
     setup.queries_path = directory.path() / "queries.npy";
     setup.query_labels_path = directory.path() / "query_labels.npy";
 

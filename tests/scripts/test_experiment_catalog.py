@@ -80,7 +80,7 @@ class ExperimentCatalogTest(unittest.TestCase):
             / "tcga_pancancer_r7028_l2_cuda_crossover.tsv"
         )
         lines = active_lines(setup)
-        self.assertIn(["representatives_file", "representative_pool.npy"], lines)
+        self.assertIn(["reference_vectors_file", "training_pool.npy"], lines)
         self.assertIn(["reference", "exact_cuda_direct"], lines)
         self.assertIn(["batch_sizes", "128"], lines)
         self.assertIn(["warmups", "1"], lines)

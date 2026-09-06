@@ -1,6 +1,6 @@
 # Literature
 
-`ANN.pdf` is the paper associated with this implementation:
+`HNSVW.pdf` is the paper associated with this implementation:
 
 Martin G. Herold, Danupon Nanongkai, Joachim Spoerhase, Nithin Varma, and
 Zihang Wu. “Sublinear Data Structures for Nearest Neighbor in Ultra High

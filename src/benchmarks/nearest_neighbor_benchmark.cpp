@@ -180,7 +180,8 @@ void print_usage(std::string_view program)
 {
     std::cout
         << "Usage: " << program << " --setup FILE [--validate-only]\n\n"
-        << "Run a version-two CPU/CUDA nearest-representative benchmark and "
+        << "Run a version-two CPU/CUDA nearest-neighbor benchmark over "
+           "reference vectors and "
            "write a complete JSON report plus a trial-level CSV.\n\n"
         << "  --setup FILE      Version-two benchmark configuration\n"
         << "  --validate-only   Validate configuration without loading data\n"
@@ -1118,7 +1119,7 @@ void write_approximation(std::ostream& output,
                << (index + 1 == metrics.approximation_failures.size() ? ""
                                                                       : ",");
     }
-    output << "],\"returned_representative_rank\":";
+    output << "],\"returned_neighbor_rank\":";
     if (metrics.returned_representative_rank.count == 0) {
         output << "null";
     } else {
@@ -1312,7 +1313,7 @@ void write_json_report(const BenchmarkSetup& setup,
                                  setup.json_output_path.string());
     }
     output << std::setprecision(17);
-    output << "{\n  \"schema_version\": 5,\n  \"generated_at_utc\": ";
+    output << "{\n  \"schema_version\": 6,\n  \"generated_at_utc\": ";
     write_json_string(output, utc_timestamp());
     output << ",\n  \"setup_file\": ";
     write_json_string(output, portable_path(setup.setup_path).generic_string());
@@ -1326,10 +1327,10 @@ void write_json_report(const BenchmarkSetup& setup,
     output << "},\n  \"dataset\": {\"directory\":";
     write_json_string(output,
                       portable_path(setup.dataset_directory).generic_string());
-    output << ",\"representatives_file\":";
+    output << ",\"reference_vectors_file\":";
     write_json_string(
         output, portable_path(setup.representatives_path).generic_string());
-    output << ",\"representative_labels_file\":";
+    output << ",\"reference_labels_file\":";
     if (dataset.labels_available) {
         write_json_string(
             output,
@@ -1347,18 +1348,18 @@ void write_json_report(const BenchmarkSetup& setup,
     } else {
         output << "null";
     }
-    output << ",\"representatives_sha256\":";
+    output << ",\"reference_vectors_sha256\":";
     write_json_string(
         output,
         ultrahigh_ann::io::sha256_hex(dataset.representatives_sha256));
-    output << ",\"representative_labels_sha256\":";
+    output << ",\"reference_labels_sha256\":";
     write_optional_digest(output, dataset.representative_labels_sha256);
     output << ",\"queries_sha256\":";
     write_json_string(output,
                       ultrahigh_ann::io::sha256_hex(dataset.queries_sha256));
     output << ",\"query_labels_sha256\":";
     write_optional_digest(output, dataset.query_labels_sha256);
-    output << ",\"representative_count\":"
+    output << ",\"reference_vector_count\":"
            << dataset.values.representatives.rows()
            << ",\"query_count_available\":" << dataset.values.queries.rows()
            << ",\"query_count_run\":" << query_count
@@ -1390,7 +1391,7 @@ void write_json_report(const BenchmarkSetup& setup,
     }
     output << ",\"source_sha256\":";
     write_optional_digest(output, probabilities.source_sha256);
-    output << ",\"representatives_sha256\":";
+    output << ",\"reference_vectors_sha256\":";
     write_optional_digest(output, probabilities.representatives_sha256);
     output << ",\"build_ms\":" << probabilities.build_ms
            << ",\"load_ms\":" << probabilities.load_ms
@@ -1487,9 +1488,9 @@ void write_json_report(const BenchmarkSetup& setup,
                    << med * 1000.0 / static_cast<double>(query_count)
                    << ",\"median_queries_per_second\":"
                    << static_cast<double>(query_count) * 1000.0 / med
-                   << ",\"exact_choice_agreement_count\":"
+                   << ",\"exact_neighbor_agreement_count\":"
                    << measurement.exact_choice_agreements
-                   << ",\"exact_choice_agreement\":"
+                   << ",\"exact_neighbor_agreement\":"
                    << static_cast<double>(measurement.exact_choice_agreements) /
                           static_cast<double>(query_count)
                    << ",\"correct\":";
@@ -1560,9 +1561,9 @@ void write_csv_report(const BenchmarkSetup& setup,
                                  setup.csv_output_path.string());
     }
     output << "run_name,index,backend,strategy,reference,repetitions,seed,"
-              "projection_dimension,batch_size,warmups,trial,representatives,"
+              "projection_dimension,batch_size,warmups,trial,reference_vectors,"
               "dimension,queries,build_ms,elapsed_ms,microseconds_per_query,"
-              "queries_per_second,correct,accuracy,exact_choice_agreement,"
+              "queries_per_second,correct,accuracy,exact_neighbor_agreement,"
               "label_agreement_with_exact,distance_optimal_rate,"
               "distance_ratio_mean,distance_ratio_median,distance_ratio_p95,"
               "distance_ratio_p99,distance_ratio_max,violation_rate_eps_0_001,"
@@ -1683,14 +1684,14 @@ void print_execution(const RunExecution& execution, std::size_t query_count)
             << " median_ms=" << std::fixed << std::setprecision(3) << time
             << " us_per_query="
             << time * 1000.0 / static_cast<double>(query_count)
-            << " exact_choice_agreement=" << measurement.exact_choice_agreements
+            << " exact_neighbor_agreement=" << measurement.exact_choice_agreements
             << '/' << query_count << '\n';
     }
 }
 
 int run_benchmark(const BenchmarkSetup& setup)
 {
-    require_file(setup.representatives_path, "representatives");
+    require_file(setup.representatives_path, "reference vectors");
     require_file(setup.queries_path, "queries");
     if (setup.probability_policy == ProbabilityPolicy::load) {
         require_file(*setup.probabilities_path, "probabilities");
@@ -1712,9 +1713,10 @@ int run_benchmark(const BenchmarkSetup& setup)
         setup.maximum_queries == 0
             ? dataset.values.queries.rows()
             : std::min(setup.maximum_queries, dataset.values.queries.rows());
-    std::cout << "Loaded " << dataset.values.representatives.rows() << " x "
+    std::cout << "Loaded " << dataset.values.representatives.rows()
+              << " reference vectors in "
               << dataset.values.representatives.cols()
-              << " representatives and " << dataset.values.queries.rows()
+              << " dimensions and " << dataset.values.queries.rows()
               << " queries; running " << query_count << ".\n";
 
     ProbabilityExecution probabilities;
