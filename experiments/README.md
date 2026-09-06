@@ -182,7 +182,7 @@ focused CUDA experiments, and retains one deterministic smoke test:
 Superseded local grids may be retained beside them with a `.tsv.archive`
 suffix. That suffix is Git-ignored, so archived exploratory grids cannot
 accidentally expand the public experiment surface. Dataset preparation tools
-for COIL-100, Golub, GSE2034, and the expanded representative sets remain under
+for COIL-100, GSE2034, and the expanded representative sets remain under
 `scripts/` even though their exploratory grids are no longer checked in.
 
 Run any prepared setup directly:
