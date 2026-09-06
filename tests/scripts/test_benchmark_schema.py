@@ -17,6 +17,19 @@ sys.path.insert(0, str(PROJECT_ROOT / "scripts" / "benchmark"))
 from benchmark_reporting import parse_setup, validate_report_provenance  # noqa: E402
 
 
+EXPECTED_ASSET_SOURCE_COMMIT = "2acd11cb1b95d94afbf99a2468a4714783573c62"
+EXPECTED_REPORTS = {
+    "tcga_pancancer_r33_l2_cpu_sparse_sweep.json",
+    "tcga_pancancer_r33_l2_cpu_uniform_vs_flat.json",
+    "tcga_pancancer_r7028_l2_cuda_crossover.json",
+}
+EXPECTED_FIGURES = {
+    "tcga_pancancer_r33_l2_cpu_sparse_sweep_latency_fidelity_pareto.png",
+    "tcga_pancancer_r33_l2_cpu_uniform_vs_flat_latency_fidelity_pareto.png",
+    "tcga_pancancer_r7028_l2_cuda_crossover_latency_distance_excess_mean.png",
+}
+
+
 def valid_provenance_report() -> dict[str, object]:
     representatives_sha256 = "a" * 64
     return {
@@ -114,6 +127,68 @@ class BenchmarkSchemaTest(unittest.TestCase):
                 references = [run for run in runs if run["reference"]]
                 self.assertEqual(len(references), 1)
                 self.assertEqual(references[0]["index"], "exact")
+
+    def test_tracked_reports_use_schema_5_only(self) -> None:
+        reports = sorted((PROJECT_ROOT / "assets").glob("*.json"))
+        self.assertEqual({path.name for path in reports}, EXPECTED_REPORTS)
+        figures = {path.name for path in (PROJECT_ROOT / "assets").glob("*.png")}
+        self.assertEqual(figures, EXPECTED_FIGURES)
+        for path in reports:
+            with self.subTest(report=path.name):
+                report = json.loads(path.read_text(encoding="utf-8"))
+                self.assertEqual(report["schema_version"], 5)
+                validate_report_provenance(report)
+                source = report["provenance"]["source"]
+                self.assertEqual(source["project_version"], "0.2.0")
+                self.assertEqual(
+                    source["git"],
+                    {
+                        "available": True,
+                        "commit": EXPECTED_ASSET_SOURCE_COMMIT,
+                        "dirty": False,
+                    },
+                )
+                setup = PROJECT_ROOT / report["setup_file"]
+                self.assertTrue(setup.is_file(), setup)
+                outputs = report["outputs"]
+                self.assertEqual(Path(outputs["json"]).name, path.name)
+                self.assertEqual(
+                    Path(outputs["csv"]).stem,
+                    path.stem,
+                )
+                self.assertNotIn("exact", report)
+                self.assertNotIn("results", report)
+                references = [
+                    run for run in report["runs"] if run.get("reference") is True
+                ]
+                self.assertEqual(len(references), 1)
+                self.assertEqual(references[0]["index"], "exact")
+                self.assertTrue(all(run.get("measurements") for run in report["runs"]))
+                dataset = report["dataset"]
+                labels_available = dataset["labels_available"]
+                self.assertEqual(
+                    dataset["representative_labels_file"] is not None,
+                    labels_available,
+                )
+                self.assertEqual(
+                    dataset["query_labels_file"] is not None,
+                    labels_available,
+                )
+                for run in report["runs"]:
+                    for measurement in run["measurements"]:
+                        self.assertEqual(
+                            measurement["correct"] is not None,
+                            labels_available,
+                        )
+                        self.assertEqual(
+                            measurement["accuracy"] is not None,
+                            labels_available,
+                        )
+                        self.assertEqual(
+                            measurement["label_agreement_with_exact"]
+                            is not None,
+                            labels_available,
+                        )
 
     def test_v1_setup_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

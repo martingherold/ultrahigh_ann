@@ -5,6 +5,7 @@ message: >-
 title: "Ultra-High-Dimensional Nearest-Neighbor Search"
 type: software
 version: "0.2.0"
+date-released: 2026-09-06
 repository-code: "https://github.com/martingherold/ultrahigh_ann"
 authors:
   - family-names: Herold
