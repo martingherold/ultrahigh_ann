@@ -33,6 +33,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Install Clang OpenMP runtime
+        if: matrix.name == 'Clang'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libomp-18-dev
+
       - name: Configure
         run: >
           cmake -S . -B build
