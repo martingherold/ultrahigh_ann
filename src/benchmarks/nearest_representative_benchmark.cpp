@@ -1,22 +1,37 @@
+#include "benchmark_dataset.hpp"
 #include "benchmark_metrics.hpp"
 #include "benchmark_setup.hpp"
-#include "datasets/representative_query_dataset.hpp"
-#include "exact/l1/exact_l1_index.hpp"
-#include "exact/l2/exact_l2_index.hpp"
-#include "hnsvw25/l1/flat/l1_ann_index.hpp"
-#include "coordinate_sampling/uniform_l1_ann_index.hpp"
-#include "hnsvw25/l1/hierarchical/hierarchical_l1_ann_index.hpp"
-#include "hnsvw25/l1/importance_sampling.hpp"
-#include "hnsvw25/l2/flat/l2_ann_index.hpp"
-#include "coordinate_sampling/uniform_l2_ann_index.hpp"
-#include "hnsvw25/l2/hierarchical/hierarchical_l2_ann_index.hpp"
-#include "hnsvw25/l2/importance_sampling.hpp"
-#include "coordinate_sampling/uniform_probabilities.hpp"
+#include "ultrahigh_ann_build_config.hpp"
+
+#include "ultrahigh_ann/coordinate_sampling/coordinate_sampling.hpp"
+#include "ultrahigh_ann/coordinate_sampling/cuda_sampled_coordinate_l1_ann_index.hpp"
+#include "ultrahigh_ann/coordinate_sampling/cuda_sampled_coordinate_l2_ann_index.hpp"
+#include "ultrahigh_ann/coordinate_sampling/uniform_l1_ann_index.hpp"
+#include "ultrahigh_ann/coordinate_sampling/uniform_l2_ann_index.hpp"
+#include "ultrahigh_ann/coordinate_sampling/uniform_probabilities.hpp"
+#include "ultrahigh_ann/core/cuda_runtime_info.hpp"
+#include "ultrahigh_ann/datasets/representative_query_dataset.hpp"
+#include "ultrahigh_ann/exact/l1/cuda_exact_l1_index.hpp"
+#include "ultrahigh_ann/exact/l1/exact_l1_index.hpp"
+#include "ultrahigh_ann/exact/l2/cuda_exact_l2_index.hpp"
+#include "ultrahigh_ann/exact/l2/exact_l2_index.hpp"
+#include "ultrahigh_ann/hnsvw25/l1/flat/cuda_l1_ann_index.hpp"
+#include "ultrahigh_ann/hnsvw25/l1/flat/l1_ann_index.hpp"
+#include "ultrahigh_ann/hnsvw25/l1/hierarchical/cuda_hierarchical_l1_ann_index.hpp"
+#include "ultrahigh_ann/hnsvw25/l1/hierarchical/hierarchical_l1_ann_index.hpp"
+#include "ultrahigh_ann/hnsvw25/l1/importance_sampling.hpp"
+#include "ultrahigh_ann/hnsvw25/l2/flat/l2_ann_index.hpp"
+#include "ultrahigh_ann/hnsvw25/l2/hierarchical/cuda_hierarchical_l2_ann_index.hpp"
+#include "ultrahigh_ann/hnsvw25/l2/hierarchical/hierarchical_l2_ann_index.hpp"
+#include "ultrahigh_ann/hnsvw25/l2/importance_sampling.hpp"
+#include "ultrahigh_ann/io/importance_probability_io.hpp"
+#include "ultrahigh_ann/io/sha256.hpp"
 
 #include <algorithm>
 #include <array>
 #include <charconv>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -25,278 +40,933 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <random>
+#include <sstream>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <type_traits>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace {
 
 using Clock = std::chrono::steady_clock;
-using DistanceMetric = ultrahigh_ann::benchmark::DistanceMetric;
-
-constexpr DistanceMetric default_distance{DistanceMetric::l1};
-constexpr std::string_view default_output_path{
-    "results/raw/nearest_representative_benchmark.json"};
+using ultrahigh_ann::DenseMatrix;
+using ultrahigh_ann::IndexSpaceUsage;
+using ultrahigh_ann::RepresentativeQueryDataset;
+using ultrahigh_ann::benchmark::ApproximationMetrics;
+using ultrahigh_ann::benchmark::BenchmarkRun;
+using ultrahigh_ann::benchmark::BenchmarkSetup;
+using ultrahigh_ann::benchmark::DiagnosticMode;
+using ultrahigh_ann::benchmark::DistanceMetric;
+using ultrahigh_ann::benchmark::ExecutionBackend;
+using ultrahigh_ann::benchmark::IndexKind;
+using ultrahigh_ann::benchmark::LoadedBenchmarkDataset;
+using ultrahigh_ann::benchmark::ProbabilityPolicy;
+using ultrahigh_ann::benchmark::QueryStrategy;
 
 struct Options {
-    std::filesystem::path dataset_directory{
-        "data/processed/tcga_kidney_v1"};
-    std::size_t repetitions{64};
-    std::size_t projection_dimension{31};
-    std::uint64_t seed{42};
-    std::size_t maximum_queries{};
-    DistanceMetric distance{default_distance};
-    std::filesystem::path output_path{default_output_path};
-    std::optional<std::filesystem::path> setup_path;
+    std::filesystem::path setup_path;
+    bool validate_only{};
 };
 
-struct QueryResult {
-    std::vector<std::size_t> predictions;
-    std::size_t correct{};
-    std::size_t exact_agreements{};
-    std::size_t exact_choice_agreements{};
-    std::size_t exact_label_agreements{};
-    double elapsed_ms{};
-    std::optional<ultrahigh_ann::benchmark::ApproximationMetrics>
-        approximation_metrics;
+struct GpuProbabilityExecution {
+    std::string device_name;
+    int device{};
+    std::string distance_backend;
+    std::size_t pair_count{};
+    std::size_t pair_chunks{};
+    std::size_t device_working_set_bytes{};
+    double host_to_device_ms{};
+    double inverse_distance_ms{};
+    double coordinate_maximum_ms{};
+    double device_to_host_ms{};
+    double total_ms{};
 };
 
 struct ProbabilityExecution {
     std::vector<double> probabilities;
     double sampling_mass{};
     double build_ms{};
+    double load_ms{};
+    std::optional<std::filesystem::path> source_path;
+    std::optional<ultrahigh_ann::io::Sha256Digest> source_sha256;
+    std::optional<ultrahigh_ann::io::Sha256Digest>
+        representatives_sha256;
+    std::optional<GpuProbabilityExecution> gpu;
 };
+
+struct QueryMeasurement {
+    std::size_t batch_size{};
+    std::vector<double> trial_ms;
+    std::vector<std::size_t> predictions;
+    std::size_t workspace_payload_bytes{};
+    std::size_t correct{};
+    std::size_t exact_choice_agreements{};
+    std::size_t exact_label_agreements{};
+    std::optional<ApproximationMetrics> approximation;
+};
+
+struct RunExecution {
+    BenchmarkRun run;
+    double build_ms{};
+    IndexSpaceUsage space_usage;
+    std::vector<QueryMeasurement> measurements;
+    std::optional<int> device;
+    std::optional<std::string> device_name;
+};
+
+struct HostRuntimeInfo {
+    std::optional<std::string> processor_model;
+    std::optional<std::uint64_t> physical_memory_bytes;
+};
+
+[[nodiscard]] double elapsed_ms(Clock::time_point start)
+{
+    return std::chrono::duration<double, std::milli>(Clock::now() - start)
+        .count();
+}
+
+[[nodiscard]] HostRuntimeInfo host_runtime_info()
+{
+    HostRuntimeInfo result;
+#if defined(__linux__)
+    {
+        std::ifstream input("/proc/cpuinfo");
+        std::string line;
+        while (std::getline(input, line)) {
+            if (!line.starts_with("model name")) {
+                continue;
+            }
+            const std::size_t colon = line.find(':');
+            if (colon != std::string::npos) {
+                const std::size_t value = line.find_first_not_of(" \t", colon + 1);
+                if (value != std::string::npos) {
+                    result.processor_model = line.substr(value);
+                }
+            }
+            break;
+        }
+    }
+    {
+        std::ifstream input("/proc/meminfo");
+        std::string line;
+        while (std::getline(input, line)) {
+            if (!line.starts_with("MemTotal:")) {
+                continue;
+            }
+            std::istringstream fields(line.substr(9));
+            std::uint64_t kibibytes{};
+            std::string unit;
+            if (fields >> kibibytes >> unit && unit == "kB" &&
+                kibibytes <=
+                    std::numeric_limits<std::uint64_t>::max() / 1024U) {
+                result.physical_memory_bytes = kibibytes * 1024U;
+            }
+            break;
+        }
+    }
+#endif
+    return result;
+}
 
 void print_usage(std::string_view program)
 {
     std::cout
-        << "Usage: " << program << " [options]\n\n"
-        << "Load a transformed representative/query dataset and run exact, "
-           "flat, and hierarchical L1 or L2 queries.\n\n"
-        << "Batch mode:\n"
-        << "  --setup FILE            Run a versioned setup file; no other "
-           "options may be supplied\n\n"
-        << "Options:\n"
-        << "  --dataset DIR           Dataset directory (default: "
-           "data/processed/tcga_kidney_v1)\n"
-        << "  --repetitions N         Importance-sampling repetitions "
-           "(default: 64)\n"
-        << "  --projection-dimension N  Hierarchical Cauchy/JL dimension "
-           "(default: 31)\n"
-        << "  --seed N                Random seed (default: 42)\n"
-        << "  --distance METRIC      l1 or l2 (default: "
-        << ultrahigh_ann::benchmark::distance_name(default_distance)
-        << ")\n"
-        << "  --max-queries N         Run at most N queries; 0 means all "
-           "(default: 0)\n"
-        << "  --output FILE           JSON report path (default: "
-        << default_output_path << ")\n"
-        << "  -h, --help              Show this help\n";
-}
-
-[[nodiscard]] DistanceMetric parse_distance(std::string_view value)
-{
-    if (value == "l1") {
-        return DistanceMetric::l1;
-    }
-    if (value == "l2") {
-        return DistanceMetric::l2;
-    }
-    throw std::invalid_argument("--distance expects l1 or l2");
-}
-
-template<class Integer>
-[[nodiscard]] Integer parse_integer(
-    std::string_view text,
-    std::string_view option)
-{
-    Integer value{};
-    const auto [position, error] = std::from_chars(
-        text.data(),
-        text.data() + text.size(),
-        value);
-    if (error != std::errc{} || position != text.data() + text.size()) {
-        throw std::invalid_argument(
-            std::string(option) + " expects a nonnegative integer");
-    }
-    return value;
+        << "Usage: " << program << " --setup FILE [--validate-only]\n\n"
+        << "Run a version-two CPU/CUDA nearest-representative benchmark and "
+           "write a complete JSON report plus a trial-level CSV.\n\n"
+        << "  --setup FILE      Version-two benchmark configuration\n"
+        << "  --validate-only   Validate configuration without loading data\n"
+        << "  -h, --help        Show this help\n";
 }
 
 [[nodiscard]] Options parse_options(int argc, char** argv)
 {
     Options options;
-    bool setup_seen = false;
-    bool legacy_option_seen = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument{argv[index]};
         if (argument == "-h" || argument == "--help") {
             print_usage(argv[0]);
             std::exit(0);
         }
-        if (index + 1 >= argc) {
-            throw std::invalid_argument(
-                std::string(argument) + " expects a value");
+        if (argument == "--validate-only") {
+            options.validate_only = true;
+            continue;
         }
-        const std::string_view value{argv[++index]};
         if (argument == "--setup") {
-            if (setup_seen) {
+            if (index + 1 >= argc || !options.setup_path.empty()) {
                 throw std::invalid_argument(
-                    "--setup may only be specified once");
+                    "--setup expects exactly one value");
             }
-            options.setup_path = value;
-            setup_seen = true;
-        } else if (argument == "--dataset") {
-            options.dataset_directory = value;
-            legacy_option_seen = true;
-        } else if (argument == "--repetitions") {
-            options.repetitions =
-                parse_integer<std::size_t>(value, argument);
-            legacy_option_seen = true;
-        } else if (argument == "--projection-dimension") {
-            options.projection_dimension =
-                parse_integer<std::size_t>(value, argument);
-            legacy_option_seen = true;
-        } else if (argument == "--seed") {
-            options.seed = parse_integer<std::uint64_t>(value, argument);
-            legacy_option_seen = true;
-        } else if (argument == "--distance") {
-            options.distance = parse_distance(value);
-            legacy_option_seen = true;
-        } else if (argument == "--max-queries") {
-            options.maximum_queries =
-                parse_integer<std::size_t>(value, argument);
-            legacy_option_seen = true;
-        } else if (argument == "--output") {
-            options.output_path = value;
-            legacy_option_seen = true;
-        } else {
-            throw std::invalid_argument(
-                "unknown option: " + std::string(argument));
+            options.setup_path = argv[++index];
+            continue;
         }
+        throw std::invalid_argument("unknown option: " + std::string(argument));
     }
-
-    if (setup_seen && legacy_option_seen) {
-        throw std::invalid_argument(
-            "--setup cannot be combined with single-run options");
-    }
-    if (setup_seen) {
-        return options;
-    }
-    if (options.repetitions == 0) {
-        throw std::invalid_argument("--repetitions must be positive");
-    }
-    if (options.projection_dimension == 0) {
-        throw std::invalid_argument(
-            "--projection-dimension must be positive");
+    if (options.setup_path.empty()) {
+        throw std::invalid_argument("--setup is required");
     }
     return options;
 }
 
-template<class QueryFunction>
-[[nodiscard]] QueryResult run_queries(
-    const ultrahigh_ann::DenseMatrix& queries,
-    std::span<const std::size_t> query_labels,
-    std::span<const std::size_t> representative_labels,
-    std::size_t query_count,
-    std::span<const std::size_t> exact_predictions,
-    QueryFunction&& query)
+void require_file(const std::filesystem::path& path, std::string_view label)
 {
-    QueryResult result;
-    result.predictions.reserve(query_count);
-    const auto start = Clock::now();
-    for (std::size_t row = 0; row < query_count; ++row) {
-        const std::size_t prediction = query(queries.row(row));
-        if (prediction >= representative_labels.size()) {
-            throw std::logic_error(
-                "index returned an out-of-range representative row");
-        }
-        result.predictions.push_back(prediction);
-        result.correct += static_cast<std::size_t>(
-            representative_labels[prediction] == query_labels[row]);
-        if (!exact_predictions.empty()) {
-            if (exact_predictions[row] >= representative_labels.size()) {
-                throw std::logic_error(
-                    "exact prediction contains an out-of-range representative row");
-            }
-            result.exact_choice_agreements += static_cast<std::size_t>(
-                prediction == exact_predictions[row]);
-            result.exact_label_agreements += static_cast<std::size_t>(
-                representative_labels[prediction] ==
-                representative_labels[exact_predictions[row]]);
-        }
+    if (!std::filesystem::is_regular_file(path)) {
+        throw std::runtime_error(std::string(label) +
+                                 " is not a regular file: " + path.string());
     }
-    const auto end = Clock::now();
-    result.elapsed_ms =
-        std::chrono::duration<double, std::milli>(end - start).count();
+}
+
+[[nodiscard]] ultrahigh_ann::io::ImportanceProbabilityKind
+probability_kind(DistanceMetric distance) noexcept
+{
+    return distance == DistanceMetric::l1
+               ? ultrahigh_ann::io::ImportanceProbabilityKind::l1
+               : ultrahigh_ann::io::ImportanceProbabilityKind::l2;
+}
+
+[[nodiscard]] ultrahigh_ann::ExecutionPolicy
+execution_policy(ProbabilityPolicy policy)
+{
+    switch (policy) {
+    case ProbabilityPolicy::sequential:
+        return ultrahigh_ann::ExecutionPolicy::sequential;
+    case ProbabilityPolicy::cpu_parallel:
+        return ultrahigh_ann::ExecutionPolicy::cpu_parallel;
+    case ProbabilityPolicy::gpu_fp32:
+        return ultrahigh_ann::ExecutionPolicy::gpu_fp32;
+    case ProbabilityPolicy::gpu_cublas_fp32:
+        return ultrahigh_ann::ExecutionPolicy::gpu_cublas_fp32;
+    case ProbabilityPolicy::load:
+        break;
+    }
+    throw std::logic_error("load has no computation execution policy");
+}
+
+[[nodiscard]] GpuProbabilityExecution gpu_execution(
+    const ultrahigh_ann::L1GpuProbabilityResult& result)
+{
+    return GpuProbabilityExecution{
+        .device_name = result.device_name,
+        .device = result.device,
+        .distance_backend = "direct",
+        .pair_count = result.pair_count,
+        .pair_chunks = result.pair_chunks,
+        .device_working_set_bytes = result.device_working_set_bytes,
+        .host_to_device_ms = result.timings.host_to_device_ms,
+        .inverse_distance_ms = result.timings.inverse_distance_ms,
+        .coordinate_maximum_ms = result.timings.coordinate_maximum_ms,
+        .device_to_host_ms = result.timings.device_to_host_ms,
+        .total_ms = result.timings.total_ms,
+    };
+}
+
+[[nodiscard]] GpuProbabilityExecution gpu_execution(
+    const ultrahigh_ann::L2GpuProbabilityResult& result)
+{
+    return GpuProbabilityExecution{
+        .device_name = result.device_name,
+        .device = result.device,
+        .distance_backend =
+            result.distance_backend ==
+                    ultrahigh_ann::L2GpuDistanceBackend::cublas
+                ? "cublas"
+                : "direct",
+        .pair_count = result.pair_count,
+        .pair_chunks = result.pair_chunks,
+        .device_working_set_bytes = result.device_working_set_bytes,
+        .host_to_device_ms = result.timings.host_to_device_ms,
+        .inverse_distance_ms = result.timings.inverse_distance_ms,
+        .coordinate_maximum_ms = result.timings.coordinate_maximum_ms,
+        .device_to_host_ms = result.timings.device_to_host_ms,
+        .total_ms = result.timings.total_ms,
+    };
+}
+
+[[nodiscard]] ProbabilityExecution
+obtain_probabilities(const BenchmarkSetup& setup,
+                     const DenseMatrix& representatives,
+                     const ultrahigh_ann::io::Sha256Digest&
+                         representatives_sha256)
+{
+    if (setup.probability_policy == ProbabilityPolicy::load) {
+        const auto start = Clock::now();
+        const auto source_sha256 = ultrahigh_ann::io::sha256_file(
+            *setup.probabilities_path);
+        auto file = ultrahigh_ann::io::load_importance_probabilities(
+            *setup.probabilities_path);
+        if (!ultrahigh_ann::io::importance_probability_source_matches(
+                file, probability_kind(setup.distance), representatives.rows(),
+                representatives.cols(), representatives_sha256)) {
+            throw std::runtime_error(
+                "probability metadata or representative-matrix digest does "
+                "not match the configured dataset; regenerate the "
+                "probability file");
+        }
+        const double mass =
+            ultrahigh_ann::compute_sampling_mass(file.probabilities);
+        return ProbabilityExecution{
+            .probabilities = std::move(file.probabilities),
+            .sampling_mass = mass,
+            .build_ms = 0.0,
+            .load_ms = elapsed_ms(start),
+            .source_path = setup.probabilities_path,
+            .source_sha256 = source_sha256,
+            .representatives_sha256 = file.representatives_sha256,
+            .gpu = std::nullopt,
+        };
+    }
+
+    const auto start = Clock::now();
+    ProbabilityExecution result;
+    if (setup.distance == DistanceMetric::l1) {
+        if (setup.probability_policy == ProbabilityPolicy::gpu_fp32) {
+            auto gpu =
+                ultrahigh_ann::compute_l1_importance_probabilities_gpu(
+                    representatives, setup.device);
+            result.gpu = gpu_execution(gpu);
+            result.probabilities = std::move(gpu.probabilities);
+        } else {
+            result.probabilities =
+                ultrahigh_ann::compute_l1_importance_probabilities(
+                    representatives,
+                    execution_policy(setup.probability_policy));
+        }
+    } else if (setup.probability_policy == ProbabilityPolicy::gpu_fp32 ||
+               setup.probability_policy == ProbabilityPolicy::gpu_cublas_fp32) {
+        const auto distance_backend =
+            setup.probability_policy == ProbabilityPolicy::gpu_cublas_fp32
+                ? ultrahigh_ann::L2GpuDistanceBackend::cublas
+                : ultrahigh_ann::L2GpuDistanceBackend::direct;
+        auto gpu = ultrahigh_ann::compute_l2_importance_probabilities_gpu(
+            representatives, setup.device, 128, distance_backend);
+        result.gpu = gpu_execution(gpu);
+        result.probabilities = std::move(gpu.probabilities);
+    } else {
+        result.probabilities =
+            ultrahigh_ann::compute_l2_importance_probabilities(
+                representatives, execution_policy(setup.probability_policy));
+    }
+    result.sampling_mass =
+        ultrahigh_ann::compute_sampling_mass(result.probabilities);
+    result.build_ms = elapsed_ms(start);
+    result.representatives_sha256 = representatives_sha256;
     return result;
 }
 
-[[nodiscard]] double elapsed_ms(Clock::time_point start)
+[[nodiscard]] bool requires_probabilities(const BenchmarkSetup& setup)
 {
-    return std::chrono::duration<double, std::milli>(
-               Clock::now() - start)
-        .count();
+    return std::ranges::any_of(setup.runs, [](const BenchmarkRun& run) {
+        return run.index != IndexKind::exact;
+    });
 }
 
-[[nodiscard]] double accuracy(const QueryResult& result)
+[[nodiscard]] std::vector<std::size_t>
+effective_batches(const BenchmarkRun& run, std::size_t query_count)
 {
-    return static_cast<double>(result.correct) /
-           static_cast<double>(result.predictions.size());
+    std::vector<std::size_t> result;
+    std::unordered_set<std::size_t> seen;
+    for (const std::size_t requested : run.batch_sizes) {
+        const std::size_t batch = std::min(requested, query_count);
+        if (seen.insert(batch).second) {
+            result.push_back(batch);
+        }
+    }
+    return result;
 }
 
-[[nodiscard]] double agreement_with_exact(const QueryResult& result)
+template <class Function>
+[[nodiscard]] QueryMeasurement
+measure_queries(const BenchmarkRun& run, std::size_t batch_size,
+                std::size_t query_count, std::size_t workspace_payload_bytes,
+                Function&& function)
 {
-    return static_cast<double>(result.exact_agreements) /
-           static_cast<double>(result.predictions.size());
+    std::vector<std::size_t> predictions(query_count);
+    for (std::size_t warmup = 0; warmup < run.warmups; ++warmup) {
+        function(predictions);
+    }
+    std::vector<double> times;
+    times.reserve(run.trials);
+    for (std::size_t trial = 0; trial < run.trials; ++trial) {
+        const auto start = Clock::now();
+        function(predictions);
+        times.push_back(elapsed_ms(start));
+    }
+    return QueryMeasurement{
+        .batch_size = batch_size,
+        .trial_ms = std::move(times),
+        .predictions = std::move(predictions),
+        .workspace_payload_bytes = workspace_payload_bytes,
+        .correct = 0,
+        .exact_choice_agreements = 0,
+        .exact_label_agreements = 0,
+        .approximation = std::nullopt,
+    };
 }
 
-[[nodiscard]] double agreement_with_exact_choice(const QueryResult& result)
+template <class Index>
+void run_sequential(const Index& index, const DenseMatrix& queries,
+                    std::size_t query_count, std::span<std::size_t> output)
 {
-    return static_cast<double>(result.exact_choice_agreements) /
-           static_cast<double>(result.predictions.size());
+    for (std::size_t row = 0; row < query_count; ++row) {
+        output[row] = index.query(queries.row(row));
+    }
 }
 
-[[nodiscard]] double label_agreement_with_exact(const QueryResult& result)
+template <class Index, class Workspace>
+void run_sequential_workspace(const Index& index, const DenseMatrix& queries,
+                              std::size_t query_count,
+                              std::span<std::size_t> output,
+                              Workspace& workspace)
 {
-    return static_cast<double>(result.exact_label_agreements) /
-           static_cast<double>(result.predictions.size());
+    for (std::size_t row = 0; row < query_count; ++row) {
+        output[row] = index.query(queries.row(row), workspace);
+    }
 }
 
-[[nodiscard]] std::size_t representative_class_count(
-    const ultrahigh_ann::RepresentativeQueryDataset& dataset)
+[[nodiscard]] ultrahigh_ann::CpuDenseL2QueryStrategy
+cpu_l2_strategy(QueryStrategy strategy)
 {
-    return std::unordered_set<std::size_t>{
-        dataset.representative_labels.begin(),
-        dataset.representative_labels.end()}
-        .size();
+    switch (strategy) {
+    case QueryStrategy::sequential:
+        return ultrahigh_ann::CpuDenseL2QueryStrategy::sequential;
+    case QueryStrategy::parallel_queries:
+        return ultrahigh_ann::CpuDenseL2QueryStrategy::parallel_queries;
+    case QueryStrategy::parallel_representatives:
+        return ultrahigh_ann::CpuDenseL2QueryStrategy::parallel_representatives;
+    case QueryStrategy::automatic:
+        return ultrahigh_ann::CpuDenseL2QueryStrategy::automatic;
+    case QueryStrategy::direct:
+    case QueryStrategy::gemm:
+        break;
+    }
+    throw std::logic_error("invalid CPU L2 query strategy");
+}
+
+template <class Index>
+void run_cpu_l2_batched(const Index& index, const DenseMatrix& queries,
+                        std::size_t query_count, std::size_t batch_size,
+                        std::span<std::size_t> output, QueryStrategy strategy)
+{
+    const std::size_t dimension = queries.cols();
+    for (std::size_t begin = 0; begin < query_count; begin += batch_size) {
+        const std::size_t count = std::min(batch_size, query_count - begin);
+        index.query_batch(
+            queries.values().subspan(begin * dimension, count * dimension),
+            count, output.subspan(begin, count), cpu_l2_strategy(strategy));
+    }
+}
+
+template <class Index, class Workspace, class Strategy>
+void run_cuda_batched(const Index& index, const DenseMatrix& queries,
+                      std::size_t query_count, std::size_t batch_size,
+                      std::span<std::size_t> output, Workspace& workspace,
+                      Strategy strategy)
+{
+    const std::size_t dimension = queries.cols();
+    for (std::size_t begin = 0; begin < query_count; begin += batch_size) {
+        const std::size_t count = std::min(batch_size, query_count - begin);
+        index.query_batch(
+            queries.values().subspan(begin * dimension, count * dimension),
+            count, output.subspan(begin, count), workspace, strategy);
+    }
+}
+
+template <class Index, class Workspace>
+void run_cuda_batched(const Index& index, const DenseMatrix& queries,
+                      std::size_t query_count, std::size_t batch_size,
+                      std::span<std::size_t> output, Workspace& workspace)
+{
+    const std::size_t dimension = queries.cols();
+    for (std::size_t begin = 0; begin < query_count; begin += batch_size) {
+        const std::size_t count = std::min(batch_size, query_count - begin);
+        index.query_batch(
+            queries.values().subspan(begin * dimension, count * dimension),
+            count, output.subspan(begin, count), workspace);
+    }
+}
+
+[[nodiscard]] ultrahigh_ann::CudaExactL2QueryStrategy
+cuda_exact_strategy(QueryStrategy strategy)
+{
+    return strategy == QueryStrategy::direct
+               ? ultrahigh_ann::CudaExactL2QueryStrategy::direct
+               : ultrahigh_ann::CudaExactL2QueryStrategy::gemm;
+}
+
+[[nodiscard]] ultrahigh_ann::CudaSampledCoordinateL2QueryStrategy
+cuda_sampled_strategy(QueryStrategy strategy)
+{
+    return strategy == QueryStrategy::direct
+               ? ultrahigh_ann::CudaSampledCoordinateL2QueryStrategy::direct
+               : ultrahigh_ann::CudaSampledCoordinateL2QueryStrategy::gemm;
+}
+
+[[nodiscard]] ultrahigh_ann::CudaHierarchicalL2QueryStrategy
+cuda_hierarchical_strategy(QueryStrategy strategy)
+{
+    return strategy == QueryStrategy::direct
+               ? ultrahigh_ann::CudaHierarchicalL2QueryStrategy::direct
+               : ultrahigh_ann::CudaHierarchicalL2QueryStrategy::gemm;
+}
+
+[[nodiscard]] ultrahigh_ann::CudaHierarchicalL1QueryStrategy
+cuda_hierarchical_l1_strategy(QueryStrategy strategy)
+{
+    return strategy == QueryStrategy::direct
+               ? ultrahigh_ann::CudaHierarchicalL1QueryStrategy::direct
+               : ultrahigh_ann::CudaHierarchicalL1QueryStrategy::gemm;
+}
+
+template <class Index>
+[[nodiscard]] RunExecution execute_cpu_sequential_index(
+    const BenchmarkRun& run, const RepresentativeQueryDataset& dataset,
+    std::size_t query_count, Index&& index, double build_ms)
+{
+    RunExecution execution{
+        .run = run,
+        .build_ms = build_ms,
+        .space_usage = index.space_usage(),
+        .measurements = {},
+        .device = std::nullopt,
+        .device_name = std::nullopt,
+    };
+    for (const std::size_t batch : effective_batches(run, query_count)) {
+        execution.measurements.push_back(
+            measure_queries(run, batch, query_count,
+                            execution.space_usage.query_workspace_payload_bytes,
+                            [&](std::span<std::size_t> predictions) {
+                                run_sequential(index, dataset.queries,
+                                               query_count, predictions);
+                            }));
+    }
+    return execution;
+}
+
+template <class Index>
+[[nodiscard]] RunExecution execute_cuda_direct_index(
+    const BenchmarkRun& run, const RepresentativeQueryDataset& dataset,
+    std::size_t query_count, const Index& index, double build_ms)
+{
+    RunExecution execution{
+        .run = run,
+        .build_ms = build_ms,
+        .space_usage = index.space_usage(),
+        .measurements = {},
+        .device = index.device(),
+        .device_name = index.device_name(),
+    };
+    for (const std::size_t batch : effective_batches(run, query_count)) {
+        auto workspace = index.make_query_workspace(batch);
+        execution.measurements.push_back(measure_queries(
+            run, batch, query_count, workspace.payload_bytes(),
+            [&](std::span<std::size_t> predictions) {
+                run_cuda_batched(index, dataset.queries, query_count, batch,
+                                 predictions, workspace);
+            }));
+    }
+    return execution;
+}
+
+template <class Index>
+[[nodiscard]] RunExecution
+execute_cpu_l2_index(const BenchmarkRun& run,
+                     const RepresentativeQueryDataset& dataset,
+                     std::size_t query_count, Index&& index, double build_ms)
+{
+    RunExecution execution{
+        .run = run,
+        .build_ms = build_ms,
+        .space_usage = index.space_usage(),
+        .measurements = {},
+        .device = std::nullopt,
+        .device_name = std::nullopt,
+    };
+    for (const std::size_t batch : effective_batches(run, query_count)) {
+        execution.measurements.push_back(measure_queries(
+            run, batch, query_count,
+            execution.space_usage.query_workspace_payload_bytes,
+            [&](std::span<std::size_t> predictions) {
+                run_cpu_l2_batched(index, dataset.queries, query_count, batch,
+                                   predictions, run.strategy);
+            }));
+    }
+    return execution;
+}
+
+template <class Index>
+[[nodiscard]] RunExecution execute_hierarchical_index(
+    const BenchmarkRun& run, const RepresentativeQueryDataset& dataset,
+    std::size_t query_count, Index&& index, double build_ms)
+{
+    RunExecution execution{
+        .run = run,
+        .build_ms = build_ms,
+        .space_usage = index.space_usage(),
+        .measurements = {},
+        .device = std::nullopt,
+        .device_name = std::nullopt,
+    };
+    for (const std::size_t batch : effective_batches(run, query_count)) {
+        auto workspace = index.make_query_workspace();
+        execution.measurements.push_back(measure_queries(
+            run, batch, query_count,
+            execution.space_usage.query_workspace_payload_bytes,
+            [&](std::span<std::size_t> predictions) {
+                run_sequential_workspace(index, dataset.queries, query_count,
+                                         predictions, workspace);
+            }));
+    }
+    return execution;
+}
+
+[[nodiscard]] RunExecution
+execute_exact_run(const BenchmarkSetup& setup, const BenchmarkRun& run,
+                  const RepresentativeQueryDataset& dataset,
+                  std::size_t query_count)
+{
+    if (run.backend == ExecutionBackend::cuda) {
+        const auto start = Clock::now();
+        if (setup.distance == DistanceMetric::l1) {
+            const ultrahigh_ann::CudaExactL1Index index(dataset.representatives,
+                                                        setup.device);
+            return execute_cuda_direct_index(run, dataset, query_count, index,
+                                             elapsed_ms(start));
+        }
+        const ultrahigh_ann::CudaExactL2Index index(dataset.representatives,
+                                                    setup.device);
+        const double build_ms = elapsed_ms(start);
+        RunExecution execution{
+            .run = run,
+            .build_ms = build_ms,
+            .space_usage = index.space_usage(),
+            .measurements = {},
+            .device = index.device(),
+            .device_name = index.device_name(),
+        };
+        for (const std::size_t batch : effective_batches(run, query_count)) {
+            auto workspace = index.make_query_workspace(batch);
+            execution.measurements.push_back(measure_queries(
+                run, batch, query_count, workspace.payload_bytes(),
+                [&](std::span<std::size_t> predictions) {
+                    run_cuda_batched(index, dataset.queries, query_count, batch,
+                                     predictions, workspace,
+                                     cuda_exact_strategy(run.strategy));
+                }));
+        }
+        return execution;
+    }
+
+    const auto start = Clock::now();
+    if (setup.distance == DistanceMetric::l1) {
+        const ultrahigh_ann::ExactL1Index index(dataset.representatives);
+        return execute_cpu_sequential_index(run, dataset, query_count, index,
+                                            elapsed_ms(start));
+    }
+    const ultrahigh_ann::ExactL2Index index(dataset.representatives);
+    return execute_cpu_l2_index(run, dataset, query_count, index,
+                                elapsed_ms(start));
+}
+
+[[nodiscard]] RunExecution
+execute_approximate_run(const BenchmarkSetup& setup, const BenchmarkRun& run,
+                        const RepresentativeQueryDataset& dataset,
+                        const ProbabilityExecution& probabilities,
+                        std::span<const double> uniform,
+                        std::size_t query_count)
+{
+    std::mt19937_64 random_engine(run.seed);
+    if (run.backend == ExecutionBackend::cuda) {
+        const auto start = Clock::now();
+        if (setup.distance == DistanceMetric::l1 &&
+            run.index == IndexKind::hierarchical) {
+            const ultrahigh_ann::CudaHierarchicalL1AnnIndex index(
+                dataset.representatives, probabilities.probabilities,
+                run.repetitions, run.projection_dimension, random_engine,
+                setup.device);
+            const double build_ms = elapsed_ms(start);
+            RunExecution execution{
+                .run = run,
+                .build_ms = build_ms,
+                .space_usage = index.space_usage(),
+                .measurements = {},
+                .device = index.device(),
+                .device_name = index.device_name(),
+            };
+            for (const std::size_t batch :
+                 effective_batches(run, query_count)) {
+                auto workspace = index.make_query_workspace(batch);
+                execution.measurements.push_back(measure_queries(
+                    run, batch, query_count, workspace.payload_bytes(),
+                    [&](std::span<std::size_t> predictions) {
+                        run_cuda_batched(
+                            index, dataset.queries, query_count, batch,
+                            predictions, workspace,
+                            cuda_hierarchical_l1_strategy(run.strategy));
+                    }));
+            }
+            return execution;
+        }
+        if (setup.distance == DistanceMetric::l1 &&
+            run.index == IndexKind::flat) {
+            const ultrahigh_ann::CudaFlatL1AnnIndex index(
+                dataset.representatives, probabilities.probabilities,
+                run.repetitions, random_engine, setup.device);
+            return execute_cuda_direct_index(run, dataset, query_count, index,
+                                             elapsed_ms(start));
+        }
+        if (setup.distance == DistanceMetric::l2 &&
+            run.index == IndexKind::hierarchical) {
+            const ultrahigh_ann::CudaHierarchicalL2AnnIndex index(
+                dataset.representatives, probabilities.probabilities,
+                run.repetitions, run.projection_dimension, random_engine,
+                setup.device);
+            const double build_ms = elapsed_ms(start);
+            RunExecution execution{
+                .run = run,
+                .build_ms = build_ms,
+                .space_usage = index.space_usage(),
+                .measurements = {},
+                .device = index.device(),
+                .device_name = index.device_name(),
+            };
+            for (const std::size_t batch :
+                 effective_batches(run, query_count)) {
+                auto workspace = index.make_query_workspace(batch);
+                execution.measurements.push_back(measure_queries(
+                    run, batch, query_count, workspace.payload_bytes(),
+                    [&](std::span<std::size_t> predictions) {
+                        run_cuda_batched(
+                            index, dataset.queries, query_count, batch,
+                            predictions, workspace,
+                            cuda_hierarchical_strategy(run.strategy));
+                    }));
+            }
+            return execution;
+        }
+        const std::span<const double> sampling_probabilities =
+            run.index == IndexKind::uniform
+                ? uniform
+                : std::span<const double>{probabilities.probabilities};
+        auto sample = ultrahigh_ann::build_coordinate_sample(
+            sampling_probabilities, run.repetitions, random_engine);
+        if (setup.distance == DistanceMetric::l1) {
+            const ultrahigh_ann::CudaSampledCoordinateL1AnnIndex index(
+                dataset.representatives, std::move(sample), setup.device);
+            return execute_cuda_direct_index(run, dataset, query_count, index,
+                                             elapsed_ms(start));
+        }
+        const ultrahigh_ann::CudaSampledCoordinateL2AnnIndex index(
+            dataset.representatives, std::move(sample), setup.device);
+        const double build_ms = elapsed_ms(start);
+        RunExecution execution{
+            .run = run,
+            .build_ms = build_ms,
+            .space_usage = index.space_usage(),
+            .measurements = {},
+            .device = index.device(),
+            .device_name = index.device_name(),
+        };
+        for (const std::size_t batch : effective_batches(run, query_count)) {
+            auto workspace = index.make_query_workspace(batch);
+            execution.measurements.push_back(measure_queries(
+                run, batch, query_count, workspace.payload_bytes(),
+                [&](std::span<std::size_t> predictions) {
+                    run_cuda_batched(index, dataset.queries, query_count, batch,
+                                     predictions, workspace,
+                                     cuda_sampled_strategy(run.strategy));
+                }));
+        }
+        return execution;
+    }
+
+    const auto start = Clock::now();
+    if (run.index == IndexKind::flat) {
+        if (setup.distance == DistanceMetric::l1) {
+            const ultrahigh_ann::FlatL1AnnIndex index(
+                dataset.representatives, probabilities.probabilities,
+                run.repetitions, random_engine);
+            return execute_cpu_sequential_index(run, dataset, query_count,
+                                                index, elapsed_ms(start));
+        }
+        const ultrahigh_ann::FlatL2AnnIndex index(
+            dataset.representatives, probabilities.probabilities,
+            run.repetitions, random_engine);
+        return execute_cpu_l2_index(run, dataset, query_count, index,
+                                    elapsed_ms(start));
+    }
+    if (run.index == IndexKind::uniform) {
+        if (setup.distance == DistanceMetric::l1) {
+            const ultrahigh_ann::UniformL1AnnIndex index(
+                dataset.representatives, probabilities.sampling_mass,
+                run.repetitions, random_engine);
+            return execute_cpu_sequential_index(run, dataset, query_count,
+                                                index, elapsed_ms(start));
+        }
+        const ultrahigh_ann::UniformL2AnnIndex index(
+            dataset.representatives, probabilities.sampling_mass,
+            run.repetitions, random_engine);
+        return execute_cpu_l2_index(run, dataset, query_count, index,
+                                    elapsed_ms(start));
+    }
+    if (setup.distance == DistanceMetric::l1) {
+        const ultrahigh_ann::HierarchicalL1AnnIndex index(
+            dataset.representatives, probabilities.probabilities,
+            run.repetitions, run.projection_dimension, random_engine);
+        return execute_hierarchical_index(run, dataset, query_count, index,
+                                          elapsed_ms(start));
+    }
+    const ultrahigh_ann::HierarchicalL2AnnIndex index(
+        dataset.representatives, probabilities.probabilities, run.repetitions,
+        run.projection_dimension, random_engine);
+    return execute_hierarchical_index(run, dataset, query_count, index,
+                                      elapsed_ms(start));
+}
+
+[[nodiscard]] double median(std::vector<double> values)
+{
+    std::ranges::sort(values);
+    const std::size_t middle = values.size() / 2;
+    return values.size() % 2 == 0 ? (values[middle - 1] + values[middle]) / 2.0
+                                  : values[middle];
+}
+
+void add_basic_quality(QueryMeasurement& measurement,
+                       const LoadedBenchmarkDataset& dataset,
+                       std::size_t query_count,
+                       std::span<const std::size_t> reference)
+{
+    for (std::size_t index = 0; index < query_count; ++index) {
+        const std::size_t candidate = measurement.predictions[index];
+        const std::size_t exact = reference[index];
+        if (candidate >= dataset.values.representatives.rows() ||
+            exact >= dataset.values.representatives.rows()) {
+            throw std::logic_error("an index returned an invalid row");
+        }
+        measurement.exact_choice_agreements +=
+            static_cast<std::size_t>(candidate == exact);
+        if (dataset.labels_available) {
+            measurement.correct += static_cast<std::size_t>(
+                dataset.values.representative_labels[candidate] ==
+                dataset.values.query_labels[index]);
+            measurement.exact_label_agreements += static_cast<std::size_t>(
+                dataset.values.representative_labels[candidate] ==
+                dataset.values.representative_labels[exact]);
+        }
+    }
+}
+
+struct DiagnosticExecution {
+    double build_ms{};
+    double evaluation_ms{};
+    std::size_t payload_bytes{};
+    std::optional<ultrahigh_ann::benchmark::QueryGeometryMetrics> geometry;
+};
+
+[[nodiscard]] DiagnosticExecution
+add_diagnostics(const BenchmarkSetup& setup,
+                const LoadedBenchmarkDataset& dataset, std::size_t query_count,
+                std::span<const std::size_t> reference,
+                std::vector<RunExecution>& executions)
+{
+    for (RunExecution& execution : executions) {
+        for (QueryMeasurement& measurement : execution.measurements) {
+            add_basic_quality(measurement, dataset, query_count, reference);
+        }
+    }
+    if (setup.diagnostics == DiagnosticMode::none) {
+        return {};
+    }
+    if (setup.diagnostics == DiagnosticMode::selected_distances) {
+        const auto start = Clock::now();
+        for (RunExecution& execution : executions) {
+            if (execution.run.name == setup.reference_run) {
+                continue;
+            }
+            QueryMeasurement& first = execution.measurements.front();
+            first.approximation =
+                ultrahigh_ann::benchmark::evaluate_selected_distances(
+                    setup.distance, dataset.values.representatives,
+                    dataset.values.queries, query_count, reference,
+                    first.predictions);
+            for (std::size_t index = 1; index < execution.measurements.size();
+                 ++index) {
+                QueryMeasurement& measurement = execution.measurements[index];
+                if (std::ranges::equal(measurement.predictions,
+                                       first.predictions)) {
+                    measurement.approximation = first.approximation;
+                } else {
+                    measurement.approximation =
+                        ultrahigh_ann::benchmark::evaluate_selected_distances(
+                            setup.distance, dataset.values.representatives,
+                            dataset.values.queries, query_count, reference,
+                            measurement.predictions);
+                }
+            }
+        }
+        return DiagnosticExecution{
+            .build_ms = 0.0,
+            .evaluation_ms = elapsed_ms(start),
+            .payload_bytes = 0,
+            .geometry = std::nullopt,
+        };
+    }
+
+    const auto build_start = Clock::now();
+    const ultrahigh_ann::benchmark::ExactDistanceTable table(
+        setup.distance, dataset.values.representatives, dataset.values.queries,
+        query_count);
+    DiagnosticExecution result{
+        .build_ms = elapsed_ms(build_start),
+        .evaluation_ms = 0.0,
+        .payload_bytes = table.payload_bytes(),
+        .geometry = table.query_geometry(),
+    };
+    const auto evaluation_start = Clock::now();
+    for (RunExecution& execution : executions) {
+        if (execution.run.name == setup.reference_run) {
+            continue;
+        }
+        QueryMeasurement& first = execution.measurements.front();
+        first.approximation = table.evaluate(first.predictions);
+        for (std::size_t index = 1; index < execution.measurements.size();
+             ++index) {
+            QueryMeasurement& measurement = execution.measurements[index];
+            measurement.approximation =
+                std::ranges::equal(measurement.predictions, first.predictions)
+                    ? first.approximation
+                    : std::optional<ApproximationMetrics>{
+                          table.evaluate(measurement.predictions)};
+        }
+    }
+    result.evaluation_ms = elapsed_ms(evaluation_start);
+    return result;
 }
 
 [[nodiscard]] std::string utc_timestamp()
 {
-    const std::time_t time = std::chrono::system_clock::to_time_t(
-        std::chrono::system_clock::now());
+    const std::time_t value =
+        std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
     std::tm utc{};
 #if defined(_WIN32)
-    if (gmtime_s(&utc, &time) != 0) {
+    if (gmtime_s(&utc, &value) != 0) {
         throw std::runtime_error("failed to create UTC timestamp");
     }
 #else
-    if (gmtime_r(&time, &utc) == nullptr) {
+    if (gmtime_r(&value, &utc) == nullptr) {
         throw std::runtime_error("failed to create UTC timestamp");
     }
 #endif
     std::array<char, 32> buffer{};
-    if (std::strftime(
-            buffer.data(),
-            buffer.size(),
-            "%Y-%m-%dT%H:%M:%SZ",
-            &utc) == 0) {
+    if (std::strftime(buffer.data(), buffer.size(), "%Y-%m-%dT%H:%M:%SZ",
+                      &utc) == 0) {
         throw std::runtime_error("failed to format UTC timestamp");
     }
     return buffer.data();
@@ -304,23 +974,15 @@ template<class QueryFunction>
 
 void write_json_string(std::ostream& output, std::string_view value)
 {
-    constexpr std::string_view hexadecimal{"0123456789abcdef"};
+    constexpr std::string_view hex{"0123456789abcdef"};
     output.put('"');
-    for (const char raw_character : value) {
-        const auto character =
-            static_cast<unsigned char>(raw_character);
+    for (const unsigned char character : value) {
         switch (character) {
         case '"':
             output << "\\\"";
             break;
         case '\\':
             output << "\\\\";
-            break;
-        case '\b':
-            output << "\\b";
-            break;
-        case '\f':
-            output << "\\f";
             break;
         case '\n':
             output << "\\n";
@@ -333,9 +995,8 @@ void write_json_string(std::ostream& output, std::string_view value)
             break;
         default:
             if (character < 0x20U) {
-                output << "\\u00"
-                       << hexadecimal[character >> 4U]
-                       << hexadecimal[character & 0x0fU];
+                output << "\\u00" << hex[character >> 4U]
+                       << hex[character & 0x0fU];
             } else {
                 output.put(static_cast<char>(character));
             }
@@ -344,33 +1005,18 @@ void write_json_string(std::ostream& output, std::string_view value)
     output.put('"');
 }
 
-[[nodiscard]] std::filesystem::path portable_report_path(
-    const std::filesystem::path& path)
+void write_optional_string(std::ostream& output,
+                           const std::optional<std::string>& value)
 {
-    std::error_code error;
-    const std::filesystem::path absolute =
-        std::filesystem::absolute(path, error).lexically_normal();
-    if (error) {
-        return path.lexically_normal();
+    if (value.has_value()) {
+        write_json_string(output, *value);
+    } else {
+        output << "null";
     }
-
-    const std::filesystem::path working_directory =
-        std::filesystem::current_path(error);
-    if (error) {
-        return absolute;
-    }
-
-    const std::filesystem::path relative =
-        absolute.lexically_relative(working_directory);
-    if (!relative.empty() && relative.begin()->generic_string() != "..") {
-        return relative;
-    }
-    return absolute;
 }
 
-void write_optional_json_number(
-    std::ostream& output,
-    const std::optional<double>& value)
+void write_optional_uint64(std::ostream& output,
+                           const std::optional<std::uint64_t>& value)
 {
     if (value.has_value()) {
         output << *value;
@@ -379,1102 +1025,757 @@ void write_optional_json_number(
     }
 }
 
-void write_distribution_json(
+void write_optional_digest(
     std::ostream& output,
-    const ultrahigh_ann::benchmark::DistributionSummary& summary,
-    std::size_t indentation)
+    const std::optional<ultrahigh_ann::io::Sha256Digest>& value)
 {
-    const std::string field(indentation + 2, ' ');
-    const std::string outer(indentation, ' ');
-    output << "{\n"
-           << field << "\"quantile_method\": \"nearest_rank\",\n"
-           << field << "\"count\": " << summary.count << ",\n"
-           << field << "\"mean\": ";
-    write_optional_json_number(output, summary.mean);
-    output << ",\n" << field << "\"median\": ";
-    write_optional_json_number(output, summary.median);
-    output << ",\n" << field << "\"percentile_95\": ";
-    write_optional_json_number(output, summary.percentile_95);
-    output << ",\n" << field << "\"percentile_99\": ";
-    write_optional_json_number(output, summary.percentile_99);
-    output << ",\n" << field << "\"maximum\": ";
-    write_optional_json_number(output, summary.maximum);
-    output << '\n' << outer << '}';
-}
-
-void write_margin_bounds_json(
-    std::ostream& output,
-    const ultrahigh_ann::benchmark::MarginBucketMetrics& bucket,
-    const std::string& field)
-{
-    output << field << "\"lower_inclusive\": "
-           << bucket.lower_inclusive << ",\n"
-           << field << "\"upper_exclusive\": ";
-    write_optional_json_number(output, bucket.upper_exclusive);
-}
-
-void write_query_geometry_json(
-    std::ostream& output,
-    const ultrahigh_ann::benchmark::QueryGeometryMetrics& geometry,
-    std::size_t indentation)
-{
-    const std::string outer(indentation, ' ');
-    const std::string field(indentation + 2, ' ');
-    const std::string nested(indentation + 4, ' ');
-    output << "{\n"
-           << field << "\"query_count\": " << geometry.query_count
-           << ",\n"
-           << field << "\"zero_optimum_query_count\": "
-           << geometry.zero_optimum_query_count << ",\n"
-           << field << "\"non_unique_optimum_query_count\": "
-           << geometry.non_unique_optimum_query_count << ",\n"
-           << field << "\"multiplicative_margin\": {\n"
-           << nested << "\"definition\": \"second_nearest_distance / nearest_distance\",\n"
-           << nested << "\"finite_distribution\": ";
-    write_distribution_json(
-        output,
-        geometry.finite_multiplicative_margin,
-        indentation + 4);
-    output << ",\n"
-           << nested << "\"infinite_count\": "
-           << geometry.infinite_multiplicative_margin_count << ",\n"
-           << nested << "\"buckets\": [\n";
-    for (std::size_t index = 0;
-         index < geometry.margin_buckets.size();
-         ++index) {
-        const auto& bucket = geometry.margin_buckets[index];
-        output << nested << "  {\n";
-        write_margin_bounds_json(output, bucket, nested + "    ");
-        output << ",\n" << nested << "    \"query_count\": "
-               << bucket.query_count << "\n"
-               << nested << "  }"
-               << (index + 1 == geometry.margin_buckets.size()
-                       ? "\n"
-                       : ",\n");
+    if (value.has_value()) {
+        write_json_string(output, ultrahigh_ann::io::sha256_hex(*value));
+    } else {
+        output << "null";
     }
-    output << nested << "]\n"
-           << field << "}\n"
-           << outer << '}';
 }
 
-void write_approximation_json(
-    std::ostream& output,
-    const QueryResult& result,
-    std::size_t indentation)
+[[nodiscard]] std::string cuda_version_string(int encoded)
 {
-    if (!result.approximation_metrics.has_value()) {
+    if (encoded <= 0) {
+        return "unknown";
+    }
+    const int major = encoded / 1000;
+    const int minor = (encoded % 1000) / 10;
+    const int patch = encoded % 10;
+    std::string result = std::to_string(major) + "." + std::to_string(minor);
+    if (patch != 0) {
+        result += "." + std::to_string(patch);
+    }
+    return result;
+}
+
+void write_optional_number(std::ostream& output,
+                           const std::optional<double>& value)
+{
+    if (value.has_value()) {
+        output << *value;
+    } else {
+        output << "null";
+    }
+}
+
+void write_distribution(
+    std::ostream& output,
+    const ultrahigh_ann::benchmark::DistributionSummary& distribution)
+{
+    output << "{\"count\":" << distribution.count << ",\"mean\":";
+    write_optional_number(output, distribution.mean);
+    output << ",\"median\":";
+    write_optional_number(output, distribution.median);
+    output << ",\"percentile_95\":";
+    write_optional_number(output, distribution.percentile_95);
+    output << ",\"percentile_99\":";
+    write_optional_number(output, distribution.percentile_99);
+    output << ",\"maximum\":";
+    write_optional_number(output, distribution.maximum);
+    output << '}';
+}
+
+void write_approximation(std::ostream& output,
+                         const std::optional<ApproximationMetrics>& value)
+{
+    if (!value.has_value()) {
         output << "null";
         return;
     }
-    const auto& metrics = *result.approximation_metrics;
-    const std::string outer(indentation, ' ');
-    const std::string field(indentation + 2, ' ');
-    const std::string nested(indentation + 4, ' ');
-    const double query_count = static_cast<double>(metrics.query_count);
-    output << "{\n"
-           << field << "\"optimal_representative_count\": "
-           << metrics.optimal_representative_count << ",\n"
-           << field << "\"optimal_representative_rate\": "
-           << static_cast<double>(metrics.optimal_representative_count) /
-                  query_count
-           << ",\n"
-           << field << "\"non_optimal_count\": "
-           << metrics.non_optimal_count << ",\n"
-           << field << "\"non_optimal_rate\": "
-           << static_cast<double>(metrics.non_optimal_count) / query_count
-           << ",\n"
-           << field << "\"distance_ratio\": {\n"
-           << nested << "\"definition\": \"returned_distance / exact_distance\",\n"
-           << nested << "\"zero_optimum_queries_excluded\": "
-           << metrics.zero_optimum_query_count << ",\n"
-           << nested << "\"distribution\": ";
-    write_distribution_json(output, metrics.distance_ratio, indentation + 4);
-    output << "\n" << field << "},\n"
-           << field << "\"non_optimal_distance_ratio\": {\n"
-           << nested << "\"eligible_non_optimal_count\": "
-           << metrics.conditional_non_optimal_ratio_count << ",\n"
-           << nested << "\"zero_optimum_non_optimal_count\": "
-           << metrics.zero_optimum_non_optimal_count << ",\n"
-           << nested << "\"mean\": ";
-    write_optional_json_number(
-        output,
-        metrics.conditional_mean_distance_ratio);
-    output << ",\n" << nested << "\"mean_relative_excess\": ";
-    write_optional_json_number(
-        output,
-        metrics.conditional_mean_relative_excess);
-    output << "\n" << field << "},\n"
-           << field << "\"approximation_guarantee_failures\": [\n";
-    for (std::size_t index = 0;
-         index < metrics.approximation_failures.size();
+    const auto& metrics = *value;
+    const double count = static_cast<double>(metrics.query_count);
+    output << "{\"distance_optimal_count\":"
+           << metrics.optimal_representative_count
+           << ",\"distance_optimal_rate\":"
+           << static_cast<double>(metrics.optimal_representative_count) / count
+           << ",\"non_optimal_count\":" << metrics.non_optimal_count
+           << ",\"non_optimal_rate\":"
+           << static_cast<double>(metrics.non_optimal_count) / count
+           << ",\"reference_improvement_count\":"
+           << metrics.reference_improvement_count << ",\"distance_ratio\":";
+    write_distribution(output, metrics.distance_ratio);
+    output << ",\"zero_optimum_query_count\":"
+           << metrics.zero_optimum_query_count
+           << ",\"zero_optimum_non_optimal_count\":"
+           << metrics.zero_optimum_non_optimal_count
+           << ",\"non_optimal_ratio_count\":"
+           << metrics.conditional_non_optimal_ratio_count
+           << ",\"non_optimal_distance_ratio_mean\":";
+    write_optional_number(output, metrics.conditional_mean_distance_ratio);
+    output << ",\"non_optimal_relative_excess_mean\":";
+    write_optional_number(output, metrics.conditional_mean_relative_excess);
+    output << ",\"approximation_guarantee_failures\":[";
+    for (std::size_t index = 0; index < metrics.approximation_failures.size();
          ++index) {
         const auto& failure = metrics.approximation_failures[index];
-        output << nested << "{\"epsilon\": " << failure.epsilon
-               << ", \"violation_count\": " << failure.violation_count
-               << ", \"violation_rate\": "
-               << static_cast<double>(failure.violation_count) / query_count
-               << '}'
-               << (index + 1 == metrics.approximation_failures.size()
-                       ? "\n"
-                       : ",\n");
+        output << "{\"epsilon\":" << failure.epsilon
+               << ",\"violation_count\":" << failure.violation_count
+               << ",\"violation_rate\":"
+               << static_cast<double>(failure.violation_count) / count << '}'
+               << (index + 1 == metrics.approximation_failures.size() ? ""
+                                                                      : ",");
     }
-    output << field << "],\n"
-           << field << "\"returned_representative_rank\": {\n"
-           << nested << "\"definition\": \"one plus the number of representatives at strictly smaller exact distance\",\n"
-           << nested << "\"distribution\": ";
-    write_distribution_json(
-        output,
-        metrics.returned_representative_rank,
-        indentation + 4);
-    output << "\n" << field << "},\n"
-           << field << "\"by_multiplicative_margin\": [\n";
-    for (std::size_t index = 0;
-         index < metrics.margin_buckets.size();
+    output << "],\"returned_representative_rank\":";
+    if (metrics.returned_representative_rank.count == 0) {
+        output << "null";
+    } else {
+        write_distribution(output, metrics.returned_representative_rank);
+    }
+    output << ",\"by_multiplicative_margin\":[";
+    for (std::size_t index = 0; index < metrics.margin_buckets.size();
          ++index) {
         const auto& bucket = metrics.margin_buckets[index];
-        output << nested << "{\n";
-        write_margin_bounds_json(output, bucket, nested + "  ");
-        output << ",\n"
-               << nested << "  \"query_count\": " << bucket.query_count
-               << ",\n"
-               << nested << "  \"non_optimal_count\": "
-               << bucket.non_optimal_count << ",\n"
-               << nested << "  \"non_optimal_rate\": ";
-        if (bucket.query_count == 0) {
-            output << "null";
-        } else {
-            output << static_cast<double>(bucket.non_optimal_count) /
-                          static_cast<double>(bucket.query_count);
-        }
-        output << ",\n"
-               << nested << "  \"ratio_eligible_count\": "
-               << bucket.ratio_eligible_count << ",\n"
-               << nested << "  \"mean_distance_ratio\": ";
-        write_optional_json_number(output, bucket.mean_distance_ratio);
-        output << "\n" << nested << '}'
-               << (index + 1 == metrics.margin_buckets.size()
-                       ? "\n"
-                       : ",\n");
+        output << "{\"lower_inclusive\":" << bucket.lower_inclusive
+               << ",\"upper_exclusive\":";
+        write_optional_number(output, bucket.upper_exclusive);
+        output << ",\"query_count\":" << bucket.query_count
+               << ",\"non_optimal_count\":" << bucket.non_optimal_count
+               << ",\"ratio_eligible_count\":" << bucket.ratio_eligible_count
+               << ",\"mean_distance_ratio\":";
+        write_optional_number(output, bucket.mean_distance_ratio);
+        output << '}'
+               << (index + 1 == metrics.margin_buckets.size() ? "" : ",");
     }
-    output << field << "]\n"
-           << outer << '}';
+    output << ']';
+    output << '}';
 }
 
-void write_method_json(
+void write_query_geometry(
     std::ostream& output,
-    std::string_view method,
-    double build_ms,
-    const QueryResult& result,
-    const ultrahigh_ann::IndexSpaceUsage& space_usage,
-    std::size_t dimension,
-    bool has_exact_baseline,
-    bool final_entry)
+    const std::optional<ultrahigh_ann::benchmark::QueryGeometryMetrics>& value)
 {
-    const double query_count =
-        static_cast<double>(result.predictions.size());
-    output << "    {\n      \"method\": ";
-    write_json_string(output, method);
-    output << ",\n"
-           << "      \"build_ms\": " << build_ms << ",\n"
-           << "      \"query_total_ms\": " << result.elapsed_ms << ",\n"
-           << "      \"microseconds_per_query\": "
-           << 1000.0 * result.elapsed_ms / query_count << ",\n"
-           << "      \"correct\": " << result.correct << ",\n"
-           << "      \"query_count\": " << result.predictions.size()
-           << ",\n"
-           << "      \"accuracy\": " << accuracy(result) << ",\n"
-           << "      \"agreement_with_exact\": ";
-    if (has_exact_baseline) {
-        output << agreement_with_exact(result);
-    } else {
+    if (!value.has_value()) {
         output << "null";
+        return;
     }
-    output << ",\n"
-           << "      \"agreement_with_exact_index_choice\": ";
-    if (has_exact_baseline) {
-        output << agreement_with_exact_choice(result);
-    } else {
-        output << "null";
+    const auto& geometry = *value;
+    output << "{\"query_count\":" << geometry.query_count
+           << ",\"zero_optimum_query_count\":"
+           << geometry.zero_optimum_query_count
+           << ",\"non_unique_optimum_query_count\":"
+           << geometry.non_unique_optimum_query_count
+           << ",\"finite_multiplicative_margin\":";
+    write_distribution(output, geometry.finite_multiplicative_margin);
+    output << ",\"infinite_multiplicative_margin_count\":"
+           << geometry.infinite_multiplicative_margin_count
+           << ",\"margin_buckets\":[";
+    for (std::size_t index = 0; index < geometry.margin_buckets.size();
+         ++index) {
+        const auto& bucket = geometry.margin_buckets[index];
+        output << "{\"lower_inclusive\":" << bucket.lower_inclusive
+               << ",\"upper_exclusive\":";
+        write_optional_number(output, bucket.upper_exclusive);
+        output << ",\"query_count\":" << bucket.query_count << '}'
+               << (index + 1 == geometry.margin_buckets.size() ? "" : ",");
     }
-    output << ",\n"
-           << "      \"label_agreement_with_exact\": ";
-    if (has_exact_baseline) {
-        output << label_agreement_with_exact(result);
-    } else {
-        output << "null";
-    }
-    output << ",\n"
-           << "      \"space\": {\n"
-           << "        \"index_payload_bytes\": "
-           << space_usage.index_payload_bytes << ",\n"
-           << "        \"query_workspace_payload_bytes\": "
-           << space_usage.query_workspace_payload_bytes << "\n"
-           << "      },\n"
-           << "      \"coordinate_access\": {\n"
-           << "        \"unique_coordinates\": "
-           << space_usage.unique_query_coordinates << ",\n"
-           << "        \"dimension_fraction\": "
-           << static_cast<double>(space_usage.unique_query_coordinates) /
-                  static_cast<double>(dimension)
-           << ",\n"
-           << "        \"sampled_multiplicity\": "
-           << space_usage.sampled_multiplicity << "\n"
-           << "      },\n"
-           << "      \"approximation\": ";
-    write_approximation_json(output, result, 6);
-    output << "\n"
-           << "    }" << (final_entry ? "\n" : ",\n");
+    output << "]}";
 }
 
-void write_json_report(
-    const Options& options,
-    const ultrahigh_ann::RepresentativeQueryDataset& dataset,
-    std::size_t query_count,
-    double load_ms,
-    double exact_build_ms,
-    const QueryResult& exact,
-    const ultrahigh_ann::IndexSpaceUsage& exact_space_usage,
-    double diagnostic_build_ms,
-    double diagnostic_evaluation_ms,
-    const ultrahigh_ann::benchmark::ExactDistanceTable& distance_table,
-    const ProbabilityExecution& probability_execution,
-    double flat_build_ms,
-    const QueryResult& flat,
-    const ultrahigh_ann::IndexSpaceUsage& flat_space_usage,
-    double hierarchical_build_ms,
-    const QueryResult& hierarchical,
-    const ultrahigh_ann::IndexSpaceUsage& hierarchical_space_usage)
+[[nodiscard]] std::filesystem::path
+portable_path(const std::filesystem::path& path)
 {
-    const std::filesystem::path parent = options.output_path.parent_path();
-    if (!parent.empty()) {
-        std::filesystem::create_directories(parent);
+    std::error_code error;
+    const auto absolute = std::filesystem::absolute(path, error);
+    if (error) {
+        return path;
     }
-    std::ofstream output(options.output_path, std::ios::trunc);
+    const auto relative =
+        absolute.lexically_relative(std::filesystem::current_path(error));
+    if (!error && !relative.empty() &&
+        relative.begin()->generic_string() != "..") {
+        return relative;
+    }
+    return absolute;
+}
+
+void write_provenance(std::ostream& output, const BenchmarkSetup& setup)
+{
+    const HostRuntimeInfo host = host_runtime_info();
+    const auto cuda = ultrahigh_ann::cuda_runtime_info(setup.device);
+    const std::string setup_sha256 = ultrahigh_ann::io::sha256_hex(
+        ultrahigh_ann::io::sha256_file(setup.setup_path));
+
+    output << ",\n  \"provenance\": {\"source\":{\"project_version\":";
+    write_json_string(output, ULTRAHIGH_ANN_VERSION);
+    output << ",\"git\":{\"available\":"
+           << (ULTRAHIGH_ANN_GIT_AVAILABLE != 0 ? "true" : "false")
+           << ",\"commit\":";
+    if (ULTRAHIGH_ANN_GIT_AVAILABLE != 0) {
+        write_json_string(output, ULTRAHIGH_ANN_GIT_COMMIT);
+    } else {
+        output << "null";
+    }
+    output << ",\"dirty\":";
+    if (ULTRAHIGH_ANN_GIT_AVAILABLE != 0) {
+        output << (ULTRAHIGH_ANN_GIT_DIRTY != 0 ? "true" : "false");
+    } else {
+        output << "null";
+    }
+    output << "}},\"build\":{\"cmake_version\":";
+    write_json_string(output, ULTRAHIGH_ANN_CMAKE_VERSION);
+    output << ",\"build_type\":";
+    write_json_string(output, ULTRAHIGH_ANN_BUILD_TYPE);
+    output << ",\"cxx\":{\"standard\":20,\"compiler_id\":";
+    write_json_string(output, ULTRAHIGH_ANN_CXX_COMPILER_ID);
+    output << ",\"compiler_version\":";
+    write_json_string(output, ULTRAHIGH_ANN_CXX_COMPILER_VERSION);
+    output << ",\"flags\":";
+    write_json_string(output, ULTRAHIGH_ANN_CXX_FLAGS);
+    output << "},\"cuda\":{\"enabled\":"
+           << (ULTRAHIGH_ANN_CUDA_ENABLED != 0 ? "true" : "false")
+           << ",\"compiler_id\":";
+    if (ULTRAHIGH_ANN_CUDA_ENABLED != 0) {
+        write_json_string(output, ULTRAHIGH_ANN_CUDA_COMPILER_ID);
+    } else {
+        output << "null";
+    }
+    output << ",\"compiler_version\":";
+    if (ULTRAHIGH_ANN_CUDA_ENABLED != 0) {
+        write_json_string(output, ULTRAHIGH_ANN_CUDA_COMPILER_VERSION);
+    } else {
+        output << "null";
+    }
+    output << ",\"architectures\":";
+    if (ULTRAHIGH_ANN_CUDA_ENABLED != 0) {
+        write_json_string(output, ULTRAHIGH_ANN_CUDA_ARCHITECTURES);
+    } else {
+        output << "null";
+    }
+    output << ",\"flags\":";
+    if (ULTRAHIGH_ANN_CUDA_ENABLED != 0) {
+        write_json_string(output, ULTRAHIGH_ANN_CUDA_FLAGS);
+    } else {
+        output << "null";
+    }
+    output << "}},\"host\":{\"operating_system\":{\"name\":";
+    write_json_string(output, ULTRAHIGH_ANN_SYSTEM_NAME);
+    output << ",\"version\":";
+    write_json_string(output, ULTRAHIGH_ANN_SYSTEM_VERSION);
+    output << ",\"architecture\":";
+    write_json_string(output, ULTRAHIGH_ANN_SYSTEM_PROCESSOR);
+    output << "},\"processor_model\":";
+    write_optional_string(output, host.processor_model);
+    output << ",\"physical_memory_bytes\":";
+    write_optional_uint64(output, host.physical_memory_bytes);
+    output << "},\"cuda_runtime\":";
+    if (cuda.has_value()) {
+        output << "{\"device\":" << cuda->device << ",\"device_name\":";
+        write_json_string(output, cuda->device_name);
+        output << ",\"compute_capability\":";
+        write_json_string(
+            output, std::to_string(cuda->compute_capability_major) + "." +
+                        std::to_string(cuda->compute_capability_minor));
+        output << ",\"total_global_memory_bytes\":"
+               << cuda->total_global_memory_bytes
+               << ",\"compiled_runtime\":{\"encoded\":"
+               << cuda->compiled_runtime_version << ",\"version\":";
+        write_json_string(
+            output, cuda_version_string(cuda->compiled_runtime_version));
+        output << "},\"runtime\":{\"encoded\":" << cuda->runtime_version
+               << ",\"version\":";
+        write_json_string(output, cuda_version_string(cuda->runtime_version));
+        output << "},\"driver\":{\"encoded\":" << cuda->driver_version
+               << ",\"version\":";
+        write_json_string(output, cuda_version_string(cuda->driver_version));
+        output << "}}";
+    } else {
+        output << "null";
+    }
+    output << ",\"invocation\":{\"arguments\":[\"--setup\",";
+    write_json_string(output, portable_path(setup.setup_path).generic_string());
+    output << "],\"setup_sha256\":";
+    write_json_string(output, setup_sha256);
+    output << "}}";
+}
+
+void ensure_parent(const std::filesystem::path& path)
+{
+    if (!path.parent_path().empty()) {
+        std::filesystem::create_directories(path.parent_path());
+    }
+}
+
+void write_json_report(const BenchmarkSetup& setup,
+                       const LoadedBenchmarkDataset& dataset,
+                       std::size_t query_count,
+                       const ProbabilityExecution& probabilities,
+                       const DiagnosticExecution& diagnostics,
+                       std::span<const RunExecution> executions)
+{
+    ensure_parent(setup.json_output_path);
+    std::ofstream output(setup.json_output_path, std::ios::trunc);
     if (!output) {
-        throw std::runtime_error(
-            "cannot open JSON report: " + options.output_path.string());
+        throw std::runtime_error("cannot open JSON output: " +
+                                 setup.json_output_path.string());
     }
-    output << std::setprecision(10);
-    output << "{\n"
-           << "  \"schema_version\": 4,\n"
-           << "  \"generated_at_utc\": ";
-    write_json_string(output, utc_timestamp());
-    output << ",\n  \"dataset\": {\n"
-           << "    \"directory\": ";
-    write_json_string(
-        output,
-        portable_report_path(options.dataset_directory).generic_string());
-    output << ",\n"
-           << "    \"representatives_file\": \"representatives.npy\",\n"
-           << "    \"representative_labels_file\": ";
-    if (std::filesystem::is_regular_file(
-            options.dataset_directory / "representative_labels.npy")) {
-        output << "\"representative_labels.npy\"";
-    } else {
-        output << "null";
-    }
-    output << ",\n"
-           << "    \"queries_file\": \"queries.npy\",\n"
-           << "    \"query_labels_file\": \"query_labels.npy\",\n"
-           << "    \"representative_count\": "
-           << dataset.representatives.rows() << ",\n"
-           << "    \"representative_class_count\": "
-           << representative_class_count(dataset) << ",\n"
-           << "    \"query_count_available\": " << dataset.queries.rows()
-           << ",\n"
-           << "    \"dimension\": " << dataset.representatives.cols()
-           << ",\n"
-           << "    \"load_ms\": " << load_ms << "\n"
-           << "  },\n"
-           << "  \"settings\": {\n"
-           << "    \"distance\": ";
-    write_json_string(
-        output,
-        ultrahigh_ann::benchmark::distance_name(options.distance));
-    output << ",\n"
-           << "    \"queries_run\": " << query_count << ",\n"
-           << "    \"query_limit\": ";
-    if (options.maximum_queries == 0) {
-        output << "null";
-    } else {
-        output << options.maximum_queries;
-    }
-    output << ",\n"
-           << "    \"seed\": " << options.seed << ",\n"
-           << "    \"flat\": {\n"
-           << "      \"repetitions\": " << options.repetitions << "\n"
-           << "    },\n"
-           << "    \"hierarchical\": {\n"
-           << "      \"repetitions\": " << options.repetitions << ",\n"
-           << "      \"projection_dimension\": "
-           << options.projection_dimension << "\n"
-           << "    }\n"
-           << "  },\n"
-           << "  \"shared_preprocessing\": {\n"
-           << "    \"sampling_probabilities\": {\n"
-           << "      \"computed_once\": true,\n"
-           << "      \"build_ms\": "
-           << probability_execution.build_ms << ",\n"
-           << "      \"coordinate_count\": "
-           << probability_execution.probabilities.size() << ",\n"
-           << "      \"sampling_mass\": "
-           << probability_execution.sampling_mass << ",\n"
-           << "      \"sampling_mass_per_representative\": "
-           << probability_execution.sampling_mass /
-                  static_cast<double>(dataset.representatives.rows())
-           << ",\n"
-           << "      \"mass_matched_uniform_probability\": "
-           << probability_execution.sampling_mass /
-                  static_cast<double>(dataset.representatives.cols())
-           << ",\n"
-           << "      \"payload_bytes\": "
-           << probability_execution.probabilities.size() * sizeof(double)
-           << "\n"
-           << "    }\n"
-           << "  },\n"
-           << "  \"diagnostics\": {\n"
-           << "    \"included_in_query_timings\": false,\n"
-           << "    \"distance_table_build_ms\": "
-           << diagnostic_build_ms << ",\n"
-           << "    \"run_evaluation_total_ms\": "
-           << diagnostic_evaluation_ms << ",\n"
-           << "    \"distance_table_payload_bytes\": "
-           << distance_table.payload_bytes() << ",\n"
-           << "    \"query_geometry\": ";
-    write_query_geometry_json(output, distance_table.query_geometry(), 4);
-    output << "\n  },\n"
-           << "  \"results\": [\n";
-    write_method_json(
-        output,
-        "exact",
-        exact_build_ms,
-        exact,
-        exact_space_usage,
-        dataset.representatives.cols(),
-        false,
-        false);
-    write_method_json(
-        output,
-        "flat",
-        flat_build_ms,
-        flat,
-        flat_space_usage,
-        dataset.representatives.cols(),
-        true,
-        false);
-    write_method_json(
-        output,
-        "hierarchical",
-        hierarchical_build_ms,
-        hierarchical,
-        hierarchical_space_usage,
-        dataset.representatives.cols(),
-        true,
-        true);
-    output << "  ]\n}\n";
-    output.close();
-    if (!output) {
-        throw std::runtime_error(
-            "failed to write JSON report: " + options.output_path.string());
-    }
-}
-
-void print_result(
-    std::string_view method,
-    double build_ms,
-    const QueryResult& result,
-    bool has_exact_baseline)
-{
-    const double query_count =
-        static_cast<double>(result.predictions.size());
-    const double accuracy_percent = 100.0 * accuracy(result);
-    const double microseconds_per_query =
-        1000.0 * result.elapsed_ms / query_count;
-
-    std::cout << std::left << std::setw(14) << method << std::right
-              << std::setw(12) << std::fixed << std::setprecision(3)
-              << build_ms << std::setw(13) << result.elapsed_ms
-              << std::setw(13) << microseconds_per_query
-              << std::setw(11) << std::setprecision(2)
-              << accuracy_percent << '%';
-    if (has_exact_baseline) {
-        const double agreement = 100.0 * agreement_with_exact(result);
-        std::cout << std::setw(12) << agreement << '%';
-    } else {
-        std::cout << std::setw(13) << "-";
-    }
-    std::cout << '\n';
-}
-
-void print_space_usage(
-    std::string_view method,
-    const ultrahigh_ann::IndexSpaceUsage& usage,
-    std::size_t dimension)
-{
-    constexpr double bytes_per_kib = 1024.0;
-    const double coordinate_percent =
-        100.0 * static_cast<double>(usage.unique_query_coordinates) /
-        static_cast<double>(dimension);
-    std::cout << std::left << std::setw(14) << method << std::right
-              << std::setw(14) << std::fixed << std::setprecision(2)
-              << static_cast<double>(usage.index_payload_bytes) /
-                     bytes_per_kib
-              << std::setw(16)
-              << static_cast<double>(usage.query_workspace_payload_bytes) /
-                     bytes_per_kib
-              << std::setw(14) << usage.unique_query_coordinates
-              << std::setw(12) << coordinate_percent << '%'
-              << std::setw(16) << usage.sampled_multiplicity << '\n';
-}
-
-struct ApproximateExecution {
-    ultrahigh_ann::benchmark::ApproximateRun run;
-    double build_ms{};
-    QueryResult query_result;
-    ultrahigh_ann::IndexSpaceUsage space_usage;
-};
-
-struct ExactExecution {
-    double build_ms{};
-    QueryResult query_result;
-    ultrahigh_ann::IndexSpaceUsage space_usage;
-};
-
-void add_approximation_metrics(
-    QueryResult& result,
-    const ultrahigh_ann::benchmark::ExactDistanceTable& distance_table)
-{
-    result.approximation_metrics =
-        distance_table.evaluate(result.predictions);
-    result.exact_agreements =
-        result.approximation_metrics->optimal_representative_count;
-}
-
-[[nodiscard]] ProbabilityExecution compute_probabilities(
-    DistanceMetric distance,
-    const ultrahigh_ann::DenseMatrix& representatives)
-{
-    const auto build_start = Clock::now();
-    std::vector<double> probabilities =
-        distance == DistanceMetric::l1
-            ? ultrahigh_ann::compute_l1_importance_probabilities(
-                  representatives)
-            : ultrahigh_ann::compute_l2_importance_probabilities(
-                  representatives);
-    const double sampling_mass =
-        ultrahigh_ann::compute_sampling_mass(probabilities);
-    return ProbabilityExecution{
-        .probabilities = std::move(probabilities),
-        .sampling_mass = sampling_mass,
-        .build_ms = elapsed_ms(build_start),
-    };
-}
-
-template<class Index>
-[[nodiscard]] ExactExecution execute_exact_index(
-    const ultrahigh_ann::RepresentativeQueryDataset& dataset,
-    std::size_t query_count)
-{
-    const auto build_start = Clock::now();
-    const Index index(dataset.representatives);
-    const double build_ms = elapsed_ms(build_start);
-    const ultrahigh_ann::IndexSpaceUsage space_usage = index.space_usage();
-    QueryResult result = run_queries(
-        dataset.queries,
-        dataset.query_labels,
-        dataset.representative_labels,
-        query_count,
-        {},
-        [&index](std::span<const float> query) {
-            return index.query(query);
-        });
-    return ExactExecution{
-        .build_ms = build_ms,
-        .query_result = std::move(result),
-        .space_usage = space_usage,
-    };
-}
-
-[[nodiscard]] ExactExecution execute_exact(
-    DistanceMetric distance,
-    const ultrahigh_ann::RepresentativeQueryDataset& dataset,
-    std::size_t query_count)
-{
-    if (distance == DistanceMetric::l1) {
-        return execute_exact_index<ultrahigh_ann::ExactL1Index>(
-            dataset,
-            query_count);
-    }
-    return execute_exact_index<ultrahigh_ann::ExactL2Index>(
-        dataset,
-        query_count);
-}
-
-template<class Index>
-[[nodiscard]] ApproximateExecution execute_flat_run(
-    const ultrahigh_ann::benchmark::ApproximateRun& run,
-    const ultrahigh_ann::RepresentativeQueryDataset& dataset,
-    std::span<const double> importance_probabilities,
-    std::size_t query_count,
-    std::span<const std::size_t> exact_predictions)
-{
-    std::mt19937_64 random_engine(run.seed);
-    const auto build_start = Clock::now();
-    const Index index(
-        dataset.representatives,
-        importance_probabilities,
-        run.repetitions,
-        random_engine);
-    const double build_ms = elapsed_ms(build_start);
-    const ultrahigh_ann::IndexSpaceUsage space_usage = index.space_usage();
-    QueryResult result = run_queries(
-        dataset.queries,
-        dataset.query_labels,
-        dataset.representative_labels,
-        query_count,
-        exact_predictions,
-        [&index](std::span<const float> query) {
-            return index.query(query);
-        });
-    return ApproximateExecution{
-        .run = run,
-        .build_ms = build_ms,
-        .query_result = std::move(result),
-        .space_usage = space_usage,
-    };
-}
-
-template<class Index>
-[[nodiscard]] ApproximateExecution execute_hierarchical_run(
-    const ultrahigh_ann::benchmark::ApproximateRun& run,
-    const ultrahigh_ann::RepresentativeQueryDataset& dataset,
-    std::span<const double> importance_probabilities,
-    std::size_t query_count,
-    std::span<const std::size_t> exact_predictions)
-{
-    std::mt19937_64 random_engine(run.seed);
-    const auto build_start = Clock::now();
-    const Index index(
-        dataset.representatives,
-        importance_probabilities,
-        run.repetitions,
-        run.projection_dimension,
-        random_engine);
-    auto workspace = index.make_query_workspace();
-    const double build_ms = elapsed_ms(build_start);
-    const ultrahigh_ann::IndexSpaceUsage space_usage = index.space_usage();
-    QueryResult result = run_queries(
-        dataset.queries,
-        dataset.query_labels,
-        dataset.representative_labels,
-        query_count,
-        exact_predictions,
-        [&index, &workspace](std::span<const float> query) {
-            return index.query(query, workspace);
-        });
-    return ApproximateExecution{
-        .run = run,
-        .build_ms = build_ms,
-        .query_result = std::move(result),
-        .space_usage = space_usage,
-    };
-}
-
-template<class Index>
-[[nodiscard]] ApproximateExecution execute_uniform_run(
-    const ultrahigh_ann::benchmark::ApproximateRun& run,
-    const ultrahigh_ann::RepresentativeQueryDataset& dataset,
-    double sampling_mass,
-    std::size_t query_count,
-    std::span<const std::size_t> exact_predictions)
-{
-    std::mt19937_64 random_engine(run.seed);
-    const auto build_start = Clock::now();
-    const Index index(
-        dataset.representatives,
-        sampling_mass,
-        run.repetitions,
-        random_engine);
-    const double build_ms = elapsed_ms(build_start);
-    const ultrahigh_ann::IndexSpaceUsage space_usage = index.space_usage();
-    QueryResult result = run_queries(
-        dataset.queries,
-        dataset.query_labels,
-        dataset.representative_labels,
-        query_count,
-        exact_predictions,
-        [&index](std::span<const float> query) {
-            return index.query(query);
-        });
-    return ApproximateExecution{
-        .run = run,
-        .build_ms = build_ms,
-        .query_result = std::move(result),
-        .space_usage = space_usage,
-    };
-}
-
-[[nodiscard]] ApproximateExecution execute_approximate_run(
-    DistanceMetric distance,
-    const ultrahigh_ann::benchmark::ApproximateRun& run,
-    const ultrahigh_ann::RepresentativeQueryDataset& dataset,
-    std::span<const double> importance_probabilities,
-    double sampling_mass,
-    std::size_t query_count,
-    std::span<const std::size_t> exact_predictions)
-{
-    if (run.method == ultrahigh_ann::benchmark::ApproximateMethod::flat) {
-        if (distance == DistanceMetric::l1) {
-            return execute_flat_run<ultrahigh_ann::FlatL1AnnIndex>(
-                run,
-                dataset,
-                importance_probabilities,
-                query_count,
-                exact_predictions);
-        }
-        return execute_flat_run<ultrahigh_ann::FlatL2AnnIndex>(
-            run,
-            dataset,
-            importance_probabilities,
-            query_count,
-            exact_predictions);
-    }
-    if (run.method ==
-        ultrahigh_ann::benchmark::ApproximateMethod::uniform) {
-        if (distance == DistanceMetric::l1) {
-            return execute_uniform_run<ultrahigh_ann::UniformL1AnnIndex>(
-                run,
-                dataset,
-                sampling_mass,
-                query_count,
-                exact_predictions);
-        }
-        return execute_uniform_run<ultrahigh_ann::UniformL2AnnIndex>(
-            run,
-            dataset,
-            sampling_mass,
-            query_count,
-            exact_predictions);
-    }
-    if (distance == DistanceMetric::l1) {
-        return execute_hierarchical_run<
-            ultrahigh_ann::HierarchicalL1AnnIndex>(
-            run,
-            dataset,
-            importance_probabilities,
-            query_count,
-            exact_predictions);
-    }
-    return execute_hierarchical_run<
-        ultrahigh_ann::HierarchicalL2AnnIndex>(
-        run,
-        dataset,
-        importance_probabilities,
-        query_count,
-        exact_predictions);
-}
-
-void write_indented_result_json(
-    std::ostream& output,
-    std::size_t indentation,
-    double build_ms,
-    const QueryResult& result,
-    const ultrahigh_ann::IndexSpaceUsage& space_usage,
-    std::size_t dimension,
-    bool has_exact_baseline)
-{
-    const std::string outer(indentation, ' ');
-    const std::string field(indentation + 2, ' ');
-    const std::string nested(indentation + 4, ' ');
-    const double query_count =
-        static_cast<double>(result.predictions.size());
-    output << "{\n"
-           << field << "\"build_ms\": " << build_ms << ",\n"
-           << field << "\"query_total_ms\": " << result.elapsed_ms
-           << ",\n"
-           << field << "\"microseconds_per_query\": "
-           << 1000.0 * result.elapsed_ms / query_count << ",\n"
-           << field << "\"correct\": " << result.correct << ",\n"
-           << field << "\"query_count\": " << result.predictions.size()
-           << ",\n"
-           << field << "\"accuracy\": " << accuracy(result) << ",\n"
-           << field << "\"agreement_with_exact\": ";
-    if (has_exact_baseline) {
-        output << agreement_with_exact(result);
-    } else {
-        output << "null";
-    }
-    output << ",\n"
-           << field << "\"agreement_with_exact_index_choice\": ";
-    if (has_exact_baseline) {
-        output << agreement_with_exact_choice(result);
-    } else {
-        output << "null";
-    }
-    output << ",\n"
-           << field << "\"label_agreement_with_exact\": ";
-    if (has_exact_baseline) {
-        output << label_agreement_with_exact(result);
-    } else {
-        output << "null";
-    }
-    output << ",\n"
-           << field << "\"space\": {\n"
-           << nested << "\"index_payload_bytes\": "
-           << space_usage.index_payload_bytes << ",\n"
-           << nested << "\"query_workspace_payload_bytes\": "
-           << space_usage.query_workspace_payload_bytes << "\n"
-           << field << "},\n"
-           << field << "\"coordinate_access\": {\n"
-           << nested << "\"unique_coordinates\": "
-           << space_usage.unique_query_coordinates << ",\n"
-           << nested << "\"dimension_fraction\": "
-           << static_cast<double>(space_usage.unique_query_coordinates) /
-                  static_cast<double>(dimension)
-           << ",\n"
-           << nested << "\"sampled_multiplicity\": "
-           << space_usage.sampled_multiplicity << "\n"
-           << field << "},\n"
-           << field << "\"approximation\": ";
-    write_approximation_json(output, result, indentation + 2);
-    output << '\n'
-           << outer << '}';
-}
-
-void write_batch_json_report(
-    const ultrahigh_ann::benchmark::BenchmarkSetup& setup,
-    const ultrahigh_ann::RepresentativeQueryDataset& dataset,
-    std::size_t query_count,
-    double load_ms,
-    double exact_build_ms,
-    const QueryResult& exact,
-    const ultrahigh_ann::IndexSpaceUsage& exact_space_usage,
-    double diagnostic_build_ms,
-    double diagnostic_evaluation_ms,
-    const ultrahigh_ann::benchmark::ExactDistanceTable& distance_table,
-    const ProbabilityExecution& probability_execution,
-    const std::vector<ApproximateExecution>& executions)
-{
-    const std::filesystem::path parent = setup.output_path.parent_path();
-    if (!parent.empty()) {
-        std::filesystem::create_directories(parent);
-    }
-    std::ofstream output(setup.output_path, std::ios::trunc);
-    if (!output) {
-        throw std::runtime_error(
-            "cannot open JSON report: " + setup.output_path.string());
-    }
-    output << std::setprecision(10);
-    output << "{\n"
-           << "  \"schema_version\": 4,\n"
-           << "  \"generated_at_utc\": ";
+    output << std::setprecision(17);
+    output << "{\n  \"schema_version\": 5,\n  \"generated_at_utc\": ";
     write_json_string(output, utc_timestamp());
     output << ",\n  \"setup_file\": ";
+    write_json_string(output, portable_path(setup.setup_path).generic_string());
+    write_provenance(output, setup);
+    output << ",\n  \"outputs\": {\"json\":";
+    write_json_string(output,
+                      portable_path(setup.json_output_path).generic_string());
+    output << ",\"csv\":";
+    write_json_string(output,
+                      portable_path(setup.csv_output_path).generic_string());
+    output << "},\n  \"dataset\": {\"directory\":";
+    write_json_string(output,
+                      portable_path(setup.dataset_directory).generic_string());
+    output << ",\"representatives_file\":";
     write_json_string(
-        output,
-        portable_report_path(setup.setup_path).generic_string());
-    output << ",\n  \"dataset\": {\n"
-           << "    \"directory\": ";
-    write_json_string(
-        output,
-        portable_report_path(setup.dataset_directory).generic_string());
-    output << ",\n"
-           << "    \"representatives_file\": \"representatives.npy\",\n"
-           << "    \"representative_labels_file\": ";
-    if (std::filesystem::is_regular_file(
-            setup.dataset_directory / "representative_labels.npy")) {
-        output << "\"representative_labels.npy\"";
-    } else {
-        output << "null";
-    }
-    output << ",\n"
-           << "    \"queries_file\": \"queries.npy\",\n"
-           << "    \"query_labels_file\": \"query_labels.npy\",\n"
-           << "    \"representative_count\": "
-           << dataset.representatives.rows() << ",\n"
-           << "    \"representative_class_count\": "
-           << representative_class_count(dataset) << ",\n"
-           << "    \"query_count_available\": " << dataset.queries.rows()
-           << ",\n"
-           << "    \"dimension\": " << dataset.representatives.cols()
-           << ",\n"
-           << "    \"load_ms\": " << load_ms << "\n"
-           << "  },\n"
-           << "  \"settings\": {\n"
-           << "    \"distance\": ";
-    write_json_string(
-        output,
-        ultrahigh_ann::benchmark::distance_name(setup.distance));
-    output << ",\n"
-           << "    \"queries_run\": " << query_count << ",\n"
-           << "    \"query_limit\": ";
-    if (setup.maximum_queries == 0) {
-        output << "null";
-    } else {
-        output << setup.maximum_queries;
-    }
-    output << "\n  },\n"
-           << "  \"shared_preprocessing\": {\n"
-           << "    \"sampling_probabilities\": {\n"
-           << "      \"computed_once\": true,\n"
-           << "      \"build_ms\": "
-           << probability_execution.build_ms << ",\n"
-           << "      \"coordinate_count\": "
-           << probability_execution.probabilities.size() << ",\n"
-           << "      \"sampling_mass\": "
-           << probability_execution.sampling_mass << ",\n"
-           << "      \"sampling_mass_per_representative\": "
-           << probability_execution.sampling_mass /
-                  static_cast<double>(dataset.representatives.rows())
-           << ",\n"
-           << "      \"mass_matched_uniform_probability\": "
-           << probability_execution.sampling_mass /
-                  static_cast<double>(dataset.representatives.cols())
-           << ",\n"
-           << "      \"payload_bytes\": "
-           << probability_execution.probabilities.size() * sizeof(double)
-           << "\n"
-           << "    }\n"
-           << "  },\n"
-           << "  \"diagnostics\": {\n"
-           << "    \"included_in_query_timings\": false,\n"
-           << "    \"distance_table_build_ms\": "
-           << diagnostic_build_ms << ",\n"
-           << "    \"run_evaluation_total_ms\": "
-           << diagnostic_evaluation_ms << ",\n"
-           << "    \"distance_table_payload_bytes\": "
-           << distance_table.payload_bytes() << ",\n"
-           << "    \"query_geometry\": ";
-    write_query_geometry_json(output, distance_table.query_geometry(), 4);
-    output << "\n  },\n"
-           << "  \"exact\": ";
-    write_indented_result_json(
-        output,
-        2,
-        exact_build_ms,
-        exact,
-        exact_space_usage,
-        dataset.representatives.cols(),
-        false);
-    output << ",\n  \"runs\": [\n";
-
-    for (std::size_t index = 0; index < executions.size(); ++index) {
-        const ApproximateExecution& execution = executions[index];
-        output << "    {\n      \"name\": ";
-        write_json_string(output, execution.run.name);
-        output << ",\n      \"method\": ";
+        output, portable_path(setup.representatives_path).generic_string());
+    output << ",\"representative_labels_file\":";
+    if (dataset.labels_available) {
         write_json_string(
             output,
-            ultrahigh_ann::benchmark::method_name(execution.run.method));
-        output << ",\n      \"settings\": {\n"
-               << "        \"repetitions\": "
-               << execution.run.repetitions << ",\n"
-               << "        \"seed\": " << execution.run.seed;
-        if (execution.run.method ==
-            ultrahigh_ann::benchmark::ApproximateMethod::hierarchical) {
-            output << ",\n        \"projection_dimension\": "
-                   << execution.run.projection_dimension;
+            portable_path(setup.representative_labels_path).generic_string());
+    } else {
+        output << "null";
+    }
+    output << ",\"queries_file\":";
+    write_json_string(output,
+                      portable_path(setup.queries_path).generic_string());
+    output << ",\"query_labels_file\":";
+    if (dataset.labels_available) {
+        write_json_string(
+            output, portable_path(setup.query_labels_path).generic_string());
+    } else {
+        output << "null";
+    }
+    output << ",\"representatives_sha256\":";
+    write_json_string(
+        output,
+        ultrahigh_ann::io::sha256_hex(dataset.representatives_sha256));
+    output << ",\"representative_labels_sha256\":";
+    write_optional_digest(output, dataset.representative_labels_sha256);
+    output << ",\"queries_sha256\":";
+    write_json_string(output,
+                      ultrahigh_ann::io::sha256_hex(dataset.queries_sha256));
+    output << ",\"query_labels_sha256\":";
+    write_optional_digest(output, dataset.query_labels_sha256);
+    output << ",\"representative_count\":"
+           << dataset.values.representatives.rows()
+           << ",\"query_count_available\":" << dataset.values.queries.rows()
+           << ",\"query_count_run\":" << query_count
+           << ",\"dimension\":" << dataset.values.representatives.cols()
+           << ",\"labels_available\":"
+           << (dataset.labels_available ? "true" : "false")
+           << ",\"hash_ms\":" << dataset.hash_ms
+           << ",\"load_ms\":" << dataset.load_ms << "},\n"
+           << "  \"settings\": {\"distance\":";
+    write_json_string(output,
+                      ultrahigh_ann::benchmark::distance_name(setup.distance));
+    output << ",\"reference_run\":";
+    write_json_string(output, setup.reference_run);
+    output << ",\"max_queries\":" << setup.maximum_queries
+           << ",\"device\":" << setup.device << ",\"diagnostics\":";
+    write_json_string(output, ultrahigh_ann::benchmark::diagnostic_mode_name(
+                                  setup.diagnostics));
+    output << "},\n  \"sampling_probabilities\": {\"required\":"
+           << (requires_probabilities(setup) ? "true" : "false")
+           << ",\"policy\":";
+    write_json_string(output, ultrahigh_ann::benchmark::probability_policy_name(
+                                  setup.probability_policy));
+    output << ",\"source_file\":";
+    if (probabilities.source_path.has_value()) {
+        write_json_string(
+            output, portable_path(*probabilities.source_path).generic_string());
+    } else {
+        output << "null";
+    }
+    output << ",\"source_sha256\":";
+    write_optional_digest(output, probabilities.source_sha256);
+    output << ",\"representatives_sha256\":";
+    write_optional_digest(output, probabilities.representatives_sha256);
+    output << ",\"build_ms\":" << probabilities.build_ms
+           << ",\"load_ms\":" << probabilities.load_ms
+           << ",\"coordinate_count\":" << probabilities.probabilities.size()
+           << ",\"sampling_mass\":" << probabilities.sampling_mass;
+    if (probabilities.gpu.has_value()) {
+        output << ",\"gpu\":{\"device\":" << probabilities.gpu->device
+               << ",\"device_name\":";
+        write_json_string(output, probabilities.gpu->device_name);
+        output << ",\"distance_backend\":";
+        write_json_string(output, probabilities.gpu->distance_backend);
+        output << ",\"arithmetic\":\"fp32\""
+               << ",\"pair_count\":" << probabilities.gpu->pair_count
+               << ",\"pair_chunks\":" << probabilities.gpu->pair_chunks
+               << ",\"device_working_set_bytes\":"
+               << probabilities.gpu->device_working_set_bytes
+               << ",\"host_to_device_ms\":"
+               << probabilities.gpu->host_to_device_ms
+               << ",\"inverse_distance_ms\":"
+               << probabilities.gpu->inverse_distance_ms
+               << ",\"coordinate_maximum_ms\":"
+               << probabilities.gpu->coordinate_maximum_ms
+               << ",\"device_to_host_ms\":"
+               << probabilities.gpu->device_to_host_ms
+               << ",\"total_ms\":" << probabilities.gpu->total_ms
+               << '}';
+    } else {
+        output << ",\"gpu\":null";
+    }
+    output << "},\n  \"diagnostic_execution\": {\"build_ms\":"
+           << diagnostics.build_ms
+           << ",\"evaluation_ms\":" << diagnostics.evaluation_ms
+           << ",\"payload_bytes\":" << diagnostics.payload_bytes
+           << ",\"query_geometry\":";
+    write_query_geometry(output, diagnostics.geometry);
+    output << "},\n  \"runs\": [\n";
+
+    for (std::size_t run_index = 0; run_index < executions.size();
+         ++run_index) {
+        const RunExecution& execution = executions[run_index];
+        output << "    {\"name\":";
+        write_json_string(output, execution.run.name);
+        output << ",\"index\":";
+        write_json_string(
+            output, ultrahigh_ann::benchmark::index_name(execution.run.index));
+        output << ",\"backend\":";
+        write_json_string(output, ultrahigh_ann::benchmark::backend_name(
+                                      execution.run.backend));
+        output << ",\"strategy\":";
+        write_json_string(output, ultrahigh_ann::benchmark::strategy_name(
+                                      execution.run.strategy));
+        output << ",\"reference\":"
+               << (execution.run.name == setup.reference_run ? "true" : "false")
+               << ",\"repetitions\":" << execution.run.repetitions
+               << ",\"seed\":" << execution.run.seed
+               << ",\"projection_dimension\":"
+               << execution.run.projection_dimension
+               << ",\"warmups\":" << execution.run.warmups
+               << ",\"trials\":" << execution.run.trials
+               << ",\"build_ms\":" << execution.build_ms
+               << ",\"space\":{\"index_payload_bytes\":"
+               << execution.space_usage.index_payload_bytes
+               << ",\"query_workspace_payload_bytes\":"
+               << execution.space_usage.query_workspace_payload_bytes
+               << ",\"unique_coordinates\":"
+               << execution.space_usage.unique_query_coordinates
+               << ",\"sampled_multiplicity\":"
+               << execution.space_usage.sampled_multiplicity << '}';
+        output << ",\"device\":";
+        if (execution.device.has_value()) {
+            output << "{\"index\":" << *execution.device << ",\"name\":";
+            write_json_string(output, *execution.device_name);
+            output << '}';
+        } else {
+            output << "null";
         }
-        output << "\n      },\n      \"result\": ";
-        write_indented_result_json(
-            output,
-            6,
-            execution.build_ms,
-            execution.query_result,
-            execution.space_usage,
-            dataset.representatives.cols(),
-            true);
-        output << "\n    }"
-               << (index + 1 == executions.size() ? "\n" : ",\n");
+        output << ",\"measurements\":[";
+        for (std::size_t measurement_index = 0;
+             measurement_index < execution.measurements.size();
+             ++measurement_index) {
+            const QueryMeasurement& measurement =
+                execution.measurements[measurement_index];
+            const double med = median(measurement.trial_ms);
+            output << "{\"batch_size\":" << measurement.batch_size
+                   << ",\"workspace_payload_bytes\":"
+                   << measurement.workspace_payload_bytes << ",\"trial_ms\":[";
+            for (std::size_t trial = 0; trial < measurement.trial_ms.size();
+                 ++trial) {
+                output << measurement.trial_ms[trial]
+                       << (trial + 1 == measurement.trial_ms.size() ? "" : ",");
+            }
+            output << "],\"median_ms\":" << med
+                   << ",\"median_microseconds_per_query\":"
+                   << med * 1000.0 / static_cast<double>(query_count)
+                   << ",\"median_queries_per_second\":"
+                   << static_cast<double>(query_count) * 1000.0 / med
+                   << ",\"exact_choice_agreement_count\":"
+                   << measurement.exact_choice_agreements
+                   << ",\"exact_choice_agreement\":"
+                   << static_cast<double>(measurement.exact_choice_agreements) /
+                          static_cast<double>(query_count)
+                   << ",\"correct\":";
+            if (dataset.labels_available) {
+                output << measurement.correct;
+            } else {
+                output << "null";
+            }
+            output << ",\"accuracy\":";
+            if (dataset.labels_available) {
+                output << static_cast<double>(measurement.correct) /
+                              static_cast<double>(query_count);
+            } else {
+                output << "null";
+            }
+            output << ",\"label_agreement_with_exact\":";
+            if (dataset.labels_available) {
+                output << static_cast<double>(
+                              measurement.exact_label_agreements) /
+                              static_cast<double>(query_count);
+            } else {
+                output << "null";
+            }
+            output << ",\"approximation\":";
+            write_approximation(output, measurement.approximation);
+            output << '}'
+                   << (measurement_index + 1 == execution.measurements.size()
+                           ? ""
+                           : ",");
+        }
+        output << "]}" << (run_index + 1 == executions.size() ? "\n" : ",\n");
     }
     output << "  ]\n}\n";
-    output.close();
     if (!output) {
+        throw std::runtime_error("failed while writing JSON output");
+    }
+}
+
+void write_csv_field(std::ostream& output, std::string_view value)
+{
+    output.put('"');
+    for (const char character : value) {
+        if (character == '"') {
+            output.put('"');
+        }
+        output.put(character);
+    }
+    output.put('"');
+}
+
+void write_csv_optional(std::ostream& output,
+                        const std::optional<double>& value)
+{
+    if (value.has_value()) {
+        output << *value;
+    }
+}
+
+void write_csv_report(const BenchmarkSetup& setup,
+                      const LoadedBenchmarkDataset& dataset,
+                      std::size_t query_count,
+                      std::span<const RunExecution> executions)
+{
+    ensure_parent(setup.csv_output_path);
+    std::ofstream output(setup.csv_output_path, std::ios::trunc);
+    if (!output) {
+        throw std::runtime_error("cannot open CSV output: " +
+                                 setup.csv_output_path.string());
+    }
+    output << "run_name,index,backend,strategy,reference,repetitions,seed,"
+              "projection_dimension,batch_size,warmups,trial,representatives,"
+              "dimension,queries,build_ms,elapsed_ms,microseconds_per_query,"
+              "queries_per_second,correct,accuracy,exact_choice_agreement,"
+              "label_agreement_with_exact,distance_optimal_rate,"
+              "distance_ratio_mean,distance_ratio_median,distance_ratio_p95,"
+              "distance_ratio_p99,distance_ratio_max,violation_rate_eps_0_001,"
+              "violation_rate_eps_0_005,violation_rate_eps_0_01,"
+              "violation_rate_eps_0_02,violation_rate_eps_0_05,"
+              "violation_rate_eps_0_10,index_payload_bytes,"
+              "workspace_payload_bytes,unique_coordinates,"
+              "sampled_multiplicity,device,device_name\n";
+    output << std::setprecision(17);
+    for (const RunExecution& execution : executions) {
+        for (const QueryMeasurement& measurement : execution.measurements) {
+            for (std::size_t trial = 0; trial < measurement.trial_ms.size();
+                 ++trial) {
+                const double time = measurement.trial_ms[trial];
+                write_csv_field(output, execution.run.name);
+                output << ','
+                       << ultrahigh_ann::benchmark::index_name(
+                              execution.run.index)
+                       << ','
+                       << ultrahigh_ann::benchmark::backend_name(
+                              execution.run.backend)
+                       << ','
+                       << ultrahigh_ann::benchmark::strategy_name(
+                              execution.run.strategy)
+                       << ','
+                       << (execution.run.name == setup.reference_run ? 1 : 0)
+                       << ',' << execution.run.repetitions << ','
+                       << execution.run.seed << ','
+                       << execution.run.projection_dimension << ','
+                       << measurement.batch_size << ',' << execution.run.warmups
+                       << ',' << trial << ','
+                       << dataset.values.representatives.rows() << ','
+                       << dataset.values.representatives.cols() << ','
+                       << query_count << ',' << execution.build_ms << ','
+                       << time << ','
+                       << time * 1000.0 / static_cast<double>(query_count)
+                       << ','
+                       << static_cast<double>(query_count) * 1000.0 / time
+                       << ',';
+                if (dataset.labels_available) {
+                    output << measurement.correct << ','
+                           << static_cast<double>(measurement.correct) /
+                                  static_cast<double>(query_count);
+                } else {
+                    output << ',';
+                }
+                output << ','
+                       << static_cast<double>(
+                              measurement.exact_choice_agreements) /
+                              static_cast<double>(query_count)
+                       << ',';
+                if (dataset.labels_available) {
+                    output << static_cast<double>(
+                                  measurement.exact_label_agreements) /
+                                  static_cast<double>(query_count);
+                }
+                output << ',';
+                if (measurement.approximation.has_value()) {
+                    const auto& approximation = *measurement.approximation;
+                    output << static_cast<double>(
+                                  approximation.optimal_representative_count) /
+                                  static_cast<double>(query_count)
+                           << ',';
+                    write_csv_optional(output,
+                                       approximation.distance_ratio.mean);
+                    output << ',';
+                    write_csv_optional(output,
+                                       approximation.distance_ratio.median);
+                    output << ',';
+                    write_csv_optional(
+                        output, approximation.distance_ratio.percentile_95);
+                    output << ',';
+                    write_csv_optional(
+                        output, approximation.distance_ratio.percentile_99);
+                    output << ',';
+                    write_csv_optional(output,
+                                       approximation.distance_ratio.maximum);
+                    for (const auto& failure :
+                         approximation.approximation_failures) {
+                        output << ','
+                               << static_cast<double>(failure.violation_count) /
+                                      static_cast<double>(query_count);
+                    }
+                } else {
+                    output << ",,,,,,,,,,,";
+                }
+                output << ',' << execution.space_usage.index_payload_bytes
+                       << ',' << measurement.workspace_payload_bytes << ','
+                       << execution.space_usage.unique_query_coordinates << ','
+                       << execution.space_usage.sampled_multiplicity << ',';
+                if (execution.device.has_value()) {
+                    output << *execution.device << ',';
+                    write_csv_field(output, *execution.device_name);
+                } else {
+                    output << ',';
+                }
+                output << '\n';
+            }
+        }
+    }
+    if (!output) {
+        throw std::runtime_error("failed while writing CSV output");
+    }
+}
+
+void print_execution(const RunExecution& execution, std::size_t query_count)
+{
+    for (const QueryMeasurement& measurement : execution.measurements) {
+        const double time = median(measurement.trial_ms);
+        std::cout
+            << "run=" << execution.run.name << " index="
+            << ultrahigh_ann::benchmark::index_name(execution.run.index)
+            << " backend="
+            << ultrahigh_ann::benchmark::backend_name(execution.run.backend)
+            << " strategy="
+            << ultrahigh_ann::benchmark::strategy_name(execution.run.strategy)
+            << " batch_size=" << measurement.batch_size
+            << " median_ms=" << std::fixed << std::setprecision(3) << time
+            << " us_per_query="
+            << time * 1000.0 / static_cast<double>(query_count)
+            << " exact_choice_agreement=" << measurement.exact_choice_agreements
+            << '/' << query_count << '\n';
+    }
+}
+
+int run_benchmark(const BenchmarkSetup& setup)
+{
+    require_file(setup.representatives_path, "representatives");
+    require_file(setup.queries_path, "queries");
+    if (setup.probability_policy == ProbabilityPolicy::load) {
+        require_file(*setup.probabilities_path, "probabilities");
+    }
+    const bool requests_cuda =
+        std::ranges::any_of(setup.runs, [](const BenchmarkRun& run) {
+            return run.backend == ExecutionBackend::cuda;
+        });
+    if (requests_cuda && !(setup.distance == DistanceMetric::l1
+                               ? ultrahigh_ann::cuda_exact_l1_available()
+                               : ultrahigh_ann::cuda_exact_l2_available())) {
         throw std::runtime_error(
-            "failed to write JSON report: " + setup.output_path.string());
+            "the setup requests CUDA, but no CUDA device is available");
     }
-}
 
-void print_batch_result(
-    std::string_view name,
-    std::string_view method,
-    double build_ms,
-    const QueryResult& result,
-    bool has_exact_baseline)
-{
-    const double query_count =
-        static_cast<double>(result.predictions.size());
-    std::cout << std::left << std::setw(25) << name
-              << std::setw(14) << method << std::right
-              << std::setw(12) << std::fixed << std::setprecision(3)
-              << build_ms << std::setw(13) << result.elapsed_ms
-              << std::setw(13) << 1000.0 * result.elapsed_ms / query_count
-              << std::setw(11) << std::setprecision(2)
-              << 100.0 * accuracy(result) << '%';
-    if (has_exact_baseline) {
-        std::cout << std::setw(12)
-                  << 100.0 * agreement_with_exact(result) << '%';
-    } else {
-        std::cout << std::setw(13) << '-';
-    }
-    std::cout << '\n';
-}
-
-void print_batch_space_usage(
-    std::string_view name,
-    std::string_view method,
-    const ultrahigh_ann::IndexSpaceUsage& usage,
-    std::size_t dimension)
-{
-    constexpr double bytes_per_kib = 1024.0;
-    const double coordinate_percent =
-        100.0 * static_cast<double>(usage.unique_query_coordinates) /
-        static_cast<double>(dimension);
-    std::cout << std::left << std::setw(25) << name
-              << std::setw(14) << method << std::right
-              << std::setw(14) << std::fixed << std::setprecision(2)
-              << static_cast<double>(usage.index_payload_bytes) /
-                     bytes_per_kib
-              << std::setw(16)
-              << static_cast<double>(usage.query_workspace_payload_bytes) /
-                     bytes_per_kib
-              << std::setw(14) << usage.unique_query_coordinates
-              << std::setw(12) << coordinate_percent << '%'
-              << std::setw(16) << usage.sampled_multiplicity << '\n';
-}
-
-int run_batch_setup(const std::filesystem::path& setup_path)
-{
-    const ultrahigh_ann::benchmark::BenchmarkSetup setup =
-        ultrahigh_ann::benchmark::load_benchmark_setup(setup_path);
-    const auto load_start = Clock::now();
-    ultrahigh_ann::RepresentativeQueryDataset dataset =
-        ultrahigh_ann::load_representative_query_dataset(
-            setup.dataset_directory);
-    const double load_ms = elapsed_ms(load_start);
+    LoadedBenchmarkDataset dataset =
+        ultrahigh_ann::benchmark::load_benchmark_dataset(setup);
     const std::size_t query_count =
         setup.maximum_queries == 0
-            ? dataset.queries.rows()
-            : std::min(setup.maximum_queries, dataset.queries.rows());
+            ? dataset.values.queries.rows()
+            : std::min(setup.maximum_queries, dataset.values.queries.rows());
+    std::cout << "Loaded " << dataset.values.representatives.rows() << " x "
+              << dataset.values.representatives.cols()
+              << " representatives and " << dataset.values.queries.rows()
+              << " queries; running " << query_count << ".\n";
 
-    std::cout << "Loaded " << dataset.representatives.rows() << " x "
-              << dataset.representatives.cols() << " representatives and "
-              << dataset.queries.rows() << " x " << dataset.queries.cols()
-              << " queries in " << std::fixed << std::setprecision(3)
-              << load_ms << " ms.\nRunning exact once and "
-              << setup.runs.size() << " approximate configurations over "
-              << query_count << " queries using "
-              << ultrahigh_ann::benchmark::distance_name(setup.distance)
-              << ".\n\n";
+    ProbabilityExecution probabilities;
+    std::vector<double> uniform;
+    if (requires_probabilities(setup)) {
+        std::cout << "Obtaining shared sampling probabilities with policy="
+                  << ultrahigh_ann::benchmark::probability_policy_name(
+                         setup.probability_policy)
+                  << "..." << std::endl;
+        probabilities =
+            obtain_probabilities(setup, dataset.values.representatives,
+                                 dataset.representatives_sha256);
+        uniform = ultrahigh_ann::make_mass_matched_uniform_probabilities(
+            dataset.values.representatives.cols(), probabilities.sampling_mass);
+    }
 
-    const ExactExecution exact = execute_exact(
-        setup.distance,
-        dataset,
-        query_count);
-    const ProbabilityExecution probability_execution =
-        compute_probabilities(
-            setup.distance,
-            dataset.representatives);
-    std::cout << "Computed "
-              << probability_execution.probabilities.size()
-              << " shared sampling probabilities with S(C)="
-              << probability_execution.sampling_mass << " once in "
-              << std::fixed << std::setprecision(3)
-              << probability_execution.build_ms << " ms.\n\n";
+    const auto reference_position =
+        std::ranges::find_if(setup.runs, [&](const BenchmarkRun& run) {
+            return run.name == setup.reference_run;
+        });
+    std::vector<const BenchmarkRun*> order;
+    order.reserve(setup.runs.size());
+    order.push_back(&*reference_position);
+    for (const BenchmarkRun& run : setup.runs) {
+        if (run.name != setup.reference_run) {
+            order.push_back(&run);
+        }
+    }
 
-    std::vector<ApproximateExecution> executions;
-    executions.reserve(setup.runs.size());
-    for (std::size_t index = 0; index < setup.runs.size(); ++index) {
-        const auto& run = setup.runs[index];
-        std::cout << '[' << index + 1 << '/' << setup.runs.size() << "] "
+    std::vector<RunExecution> executions;
+    executions.reserve(order.size());
+    for (std::size_t index = 0; index < order.size(); ++index) {
+        const BenchmarkRun& run = *order[index];
+        std::cout << '[' << index + 1 << '/' << order.size() << "] Building "
                   << run.name << " ("
-                  << ultrahigh_ann::benchmark::method_name(run.method)
-                  << ")\n";
-        executions.push_back(execute_approximate_run(
-            setup.distance,
-            run,
-            dataset,
-            probability_execution.probabilities,
-            probability_execution.sampling_mass,
-            query_count,
-            exact.query_result.predictions));
+                  << ultrahigh_ann::benchmark::backend_name(run.backend) << ' '
+                  << ultrahigh_ann::benchmark::index_name(run.index) << ")..."
+                  << std::endl;
+        if (run.index == IndexKind::exact) {
+            executions.push_back(
+                execute_exact_run(setup, run, dataset.values, query_count));
+        } else {
+            executions.push_back(
+                execute_approximate_run(setup, run, dataset.values,
+                                        probabilities, uniform, query_count));
+        }
     }
 
-    const auto diagnostic_build_start = Clock::now();
-    const ultrahigh_ann::benchmark::ExactDistanceTable distance_table(
-        setup.distance,
-        dataset.representatives,
-        dataset.queries,
-        query_count);
-    const double diagnostic_build_ms = elapsed_ms(diagnostic_build_start);
-    const auto diagnostic_evaluation_start = Clock::now();
-    for (ApproximateExecution& execution : executions) {
-        add_approximation_metrics(execution.query_result, distance_table);
-    }
-    const double diagnostic_evaluation_ms =
-        elapsed_ms(diagnostic_evaluation_start);
-    std::cout << "Computed reusable exact distance diagnostics in "
-              << diagnostic_build_ms << " ms and evaluated all runs in "
-              << diagnostic_evaluation_ms
-              << " ms (excluded from query timings).\n";
-
-    std::cout << "\n"
-              << std::left << std::setw(25) << "run"
-              << std::setw(14) << "method" << std::right
-              << std::setw(12) << "index ms" << std::setw(13) << "query ms"
-              << std::setw(13) << "us/query" << std::setw(12) << "accuracy"
-              << std::setw(13) << "vs exact" << '\n';
-    print_batch_result(
-        "exact",
-        "exact",
-        exact.build_ms,
-        exact.query_result,
-        false);
-    for (const ApproximateExecution& execution : executions) {
-        print_batch_result(
-            execution.run.name,
-            ultrahigh_ann::benchmark::method_name(execution.run.method),
-            execution.build_ms,
-            execution.query_result,
-            true);
+    const std::span<const std::size_t> reference =
+        executions.front().measurements.front().predictions;
+    const DiagnosticExecution diagnostic_execution =
+        add_diagnostics(setup, dataset, query_count, reference, executions);
+    for (const RunExecution& execution : executions) {
+        print_execution(execution, query_count);
     }
 
-    std::cout << "\nLogical standalone index space "
-                 "(allocator metadata excluded):\n"
-              << std::left << std::setw(25) << "run"
-              << std::setw(14) << "method" << std::right
-              << std::setw(14) << "index KiB"
-              << std::setw(16) << "workspace KiB"
-              << std::setw(14) << "coordinates"
-              << std::setw(13) << "dimension"
-              << std::setw(16) << "multiplicity" << '\n';
-    print_batch_space_usage(
-        "exact",
-        "exact",
-        exact.space_usage,
-        dataset.representatives.cols());
-    for (const ApproximateExecution& execution : executions) {
-        print_batch_space_usage(
-            execution.run.name,
-            ultrahigh_ann::benchmark::method_name(execution.run.method),
-            execution.space_usage,
-            dataset.representatives.cols());
-    }
-
-    write_batch_json_report(
-        setup,
-        dataset,
-        query_count,
-        load_ms,
-        exact.build_ms,
-        exact.query_result,
-        exact.space_usage,
-        diagnostic_build_ms,
-        diagnostic_evaluation_ms,
-        distance_table,
-        probability_execution,
-        executions);
-    std::cout << "\nWrote JSON report to " << setup.output_path << '\n';
+    write_json_report(setup, dataset, query_count, probabilities,
+                      diagnostic_execution, executions);
+    write_csv_report(setup, dataset, query_count, executions);
+    std::cout << "Wrote JSON report to " << setup.json_output_path << '\n'
+              << "Wrote CSV trials to " << setup.csv_output_path << '\n';
     return 0;
 }
 
@@ -1484,156 +1785,17 @@ int main(int argc, char** argv)
 {
     try {
         const Options options = parse_options(argc, argv);
-        if (options.setup_path.has_value()) {
-            return run_batch_setup(*options.setup_path);
+        const BenchmarkSetup setup =
+            ultrahigh_ann::benchmark::load_benchmark_setup(options.setup_path);
+        if (options.validate_only) {
+            std::cout << "valid_setup=" << setup.setup_path << '\n'
+                      << "runs=" << setup.runs.size() << '\n'
+                      << "reference=" << setup.reference_run << '\n'
+                      << "json_output=" << setup.json_output_path << '\n'
+                      << "csv_output=" << setup.csv_output_path << '\n';
+            return 0;
         }
-
-        const auto load_start = Clock::now();
-        ultrahigh_ann::RepresentativeQueryDataset dataset =
-            ultrahigh_ann::load_representative_query_dataset(
-                options.dataset_directory);
-        const double load_ms = elapsed_ms(load_start);
-
-        const std::size_t query_count =
-            options.maximum_queries == 0
-                ? dataset.queries.rows()
-                : std::min(
-                      options.maximum_queries,
-                      dataset.queries.rows());
-
-        std::cout
-            << "Loaded " << dataset.representatives.rows() << " x "
-            << dataset.representatives.cols() << " representatives and "
-            << dataset.queries.rows() << " x " << dataset.queries.cols()
-            << " queries in " << std::fixed << std::setprecision(3)
-            << load_ms << " ms.\n"
-            << "Running " << query_count << " queries with repetitions="
-            << options.repetitions << ", projection_dimension="
-            << options.projection_dimension << ", seed=" << options.seed
-            << ", distance="
-            << ultrahigh_ann::benchmark::distance_name(options.distance)
-            << ".\n\n";
-
-        const ExactExecution exact = execute_exact(
-            options.distance,
-            dataset,
-            query_count);
-        const ProbabilityExecution probability_execution =
-            compute_probabilities(
-                options.distance,
-                dataset.representatives);
-        std::cout << "Computed "
-                  << probability_execution.probabilities.size()
-                  << " shared sampling probabilities with S(C)="
-                  << probability_execution.sampling_mass << " once in "
-                  << std::fixed << std::setprecision(3)
-                  << probability_execution.build_ms << " ms.\n\n";
-        const ultrahigh_ann::benchmark::ApproximateRun flat_run{
-            .name = "flat",
-            .method = ultrahigh_ann::benchmark::ApproximateMethod::flat,
-            .repetitions = options.repetitions,
-            .seed = options.seed,
-        };
-        ApproximateExecution flat = execute_approximate_run(
-            options.distance,
-            flat_run,
-            dataset,
-            probability_execution.probabilities,
-            probability_execution.sampling_mass,
-            query_count,
-            exact.query_result.predictions);
-        const ultrahigh_ann::benchmark::ApproximateRun hierarchical_run{
-            .name = "hierarchical",
-            .method =
-                ultrahigh_ann::benchmark::ApproximateMethod::hierarchical,
-            .repetitions = options.repetitions,
-            .seed = options.seed,
-            .projection_dimension = options.projection_dimension,
-        };
-        ApproximateExecution hierarchical = execute_approximate_run(
-            options.distance,
-            hierarchical_run,
-            dataset,
-            probability_execution.probabilities,
-            probability_execution.sampling_mass,
-            query_count,
-            exact.query_result.predictions);
-
-        const auto diagnostic_build_start = Clock::now();
-        const ultrahigh_ann::benchmark::ExactDistanceTable distance_table(
-            options.distance,
-            dataset.representatives,
-            dataset.queries,
-            query_count);
-        const double diagnostic_build_ms = elapsed_ms(diagnostic_build_start);
-        const auto diagnostic_evaluation_start = Clock::now();
-        add_approximation_metrics(flat.query_result, distance_table);
-        add_approximation_metrics(hierarchical.query_result, distance_table);
-        const double diagnostic_evaluation_ms =
-            elapsed_ms(diagnostic_evaluation_start);
-        std::cout << "Computed reusable exact distance diagnostics in "
-                  << diagnostic_build_ms
-                  << " ms and evaluated both approximate runs in "
-                  << diagnostic_evaluation_ms
-                  << " ms (excluded from query timings).\n\n";
-
-        std::cout
-            << std::left << std::setw(14) << "method" << std::right
-            << std::setw(12) << "index ms" << std::setw(13) << "query ms"
-            << std::setw(13) << "us/query" << std::setw(12) << "accuracy"
-            << std::setw(13) << "vs exact" << '\n';
-        print_result("exact", exact.build_ms, exact.query_result, false);
-        print_result("flat", flat.build_ms, flat.query_result, true);
-        print_result(
-            "hierarchical",
-            hierarchical.build_ms,
-            hierarchical.query_result,
-            true);
-
-        std::cout
-            << "\nLogical standalone index space "
-               "(allocator metadata excluded):\n"
-            << std::left << std::setw(14) << "method" << std::right
-            << std::setw(14) << "index KiB"
-            << std::setw(16) << "workspace KiB"
-            << std::setw(14) << "coordinates"
-            << std::setw(13) << "dimension"
-            << std::setw(16) << "multiplicity" << '\n';
-        print_space_usage(
-            "exact",
-            exact.space_usage,
-            dataset.representatives.cols());
-        print_space_usage(
-            "flat",
-            flat.space_usage,
-            dataset.representatives.cols());
-        print_space_usage(
-            "hierarchical",
-            hierarchical.space_usage,
-            dataset.representatives.cols());
-
-        write_json_report(
-            options,
-            dataset,
-            query_count,
-            load_ms,
-            exact.build_ms,
-            exact.query_result,
-            exact.space_usage,
-            diagnostic_build_ms,
-            diagnostic_evaluation_ms,
-            distance_table,
-            probability_execution,
-            flat.build_ms,
-            flat.query_result,
-            flat.space_usage,
-            hierarchical.build_ms,
-            hierarchical.query_result,
-            hierarchical.space_usage);
-        std::cout << "\nWrote JSON report to "
-                  << options.output_path << '\n';
-
-        return 0;
+        return run_benchmark(setup);
     } catch (const std::exception& error) {
         std::cerr << "Error: " << error.what() << '\n';
         return 1;

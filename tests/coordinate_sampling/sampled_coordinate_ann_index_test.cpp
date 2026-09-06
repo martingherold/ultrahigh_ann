@@ -1,9 +1,9 @@
-#include "hnsvw25/l1/flat/l1_ann_index.hpp"
-#include "coordinate_sampling/uniform_l1_ann_index.hpp"
-#include "coordinate_sampling/sampled_coordinate_l1_ann_index.hpp"
-#include "hnsvw25/l2/flat/l2_ann_index.hpp"
-#include "coordinate_sampling/uniform_l2_ann_index.hpp"
-#include "coordinate_sampling/sampled_coordinate_l2_ann_index.hpp"
+#include "ultrahigh_ann/hnsvw25/l1/flat/l1_ann_index.hpp"
+#include "ultrahigh_ann/coordinate_sampling/uniform_l1_ann_index.hpp"
+#include "ultrahigh_ann/coordinate_sampling/sampled_coordinate_l1_ann_index.hpp"
+#include "ultrahigh_ann/hnsvw25/l2/flat/l2_ann_index.hpp"
+#include "ultrahigh_ann/coordinate_sampling/uniform_l2_ann_index.hpp"
+#include "ultrahigh_ann/coordinate_sampling/sampled_coordinate_l2_ann_index.hpp"
 
 #include <array>
 #include <cstddef>
@@ -11,6 +11,7 @@
 #include <iostream>
 #include <random>
 #include <span>
+#include <stdexcept>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -114,6 +115,54 @@ bool test_facades(std::string_view metric)
     return passed;
 }
 
+bool test_explicit_l1_coordinate_sample()
+{
+    using ultrahigh_ann::CoordinateSample;
+    using ultrahigh_ann::DenseMatrix;
+    using ultrahigh_ann::SampledColumn;
+    using ultrahigh_ann::SampledCoordinateL1AnnIndex;
+
+    const DenseMatrix representatives(
+        std::vector<float>{0.0F, 100.0F, 4.0F, -100.0F}, 2, 2);
+    const CoordinateSample sample{
+        .columns =
+            {
+                SampledColumn{
+                    .source_column = 0,
+                    .multiplicity = 3,
+                    .inverse_probability = 0.5,
+                },
+            },
+    };
+    const SampledCoordinateL1AnnIndex index(representatives, sample);
+    constexpr std::array<float, 2> query{3.5F, 0.0F};
+    bool passed = expect(index.query(query) == 1,
+                         "an explicit L1 sample must apply its configured "
+                         "coordinate plan");
+
+    bool invalid_weight_thrown = false;
+    try {
+        const CoordinateSample invalid_sample{
+            .columns =
+                {
+                    SampledColumn{
+                        .source_column = 0,
+                        .multiplicity = 0,
+                        .inverse_probability = 1.0,
+                    },
+                },
+        };
+        const SampledCoordinateL1AnnIndex invalid_index(
+            representatives, invalid_sample);
+        static_cast<void>(invalid_index);
+    } catch (const std::invalid_argument&) {
+        invalid_weight_thrown = true;
+    }
+    passed &= expect(invalid_weight_thrown,
+                     "an invalid explicit L1 sample must be rejected");
+    return passed;
+}
+
 }  // namespace
 
 int main()
@@ -127,5 +176,6 @@ int main()
         ultrahigh_ann::SampledCoordinateL2AnnIndex,
         ultrahigh_ann::FlatL2AnnIndex,
         ultrahigh_ann::UniformL2AnnIndex>("l2");
+    passed &= test_explicit_l1_coordinate_sample();
     return passed ? 0 : 1;
 }

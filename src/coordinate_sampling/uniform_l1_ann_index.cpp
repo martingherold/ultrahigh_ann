@@ -1,6 +1,6 @@
-#include "coordinate_sampling/uniform_l1_ann_index.hpp"
+#include "ultrahigh_ann/coordinate_sampling/uniform_l1_ann_index.hpp"
 
-#include "coordinate_sampling/uniform_probabilities.hpp"
+#include "ultrahigh_ann/coordinate_sampling/uniform_probabilities.hpp"
 
 #include <cstddef>
 #include <random>

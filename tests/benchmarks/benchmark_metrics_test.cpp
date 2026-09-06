@@ -1,6 +1,6 @@
 #include "benchmark_metrics.hpp"
 
-#include "core/dense_matrix.hpp"
+#include "ultrahigh_ann/core/dense_matrix.hpp"
 
 #include <cmath>
 #include <cstdlib>
@@ -141,6 +141,52 @@ int main()
         l2_metrics.distance_ratio.mean,
         *metrics.distance_ratio.mean,
         "one-dimensional L1 and L2 ratios agree");
+
+    const ApproximationMetrics selected = evaluate_selected_distances(
+        DistanceMetric::l1,
+        representatives,
+        queries,
+        queries.rows(),
+        std::vector<std::size_t>{0, 0, 1, 2},
+        std::vector<std::size_t>{0, 1, 0, 1});
+    expect(selected.query_count == 4, "selected-distance query count");
+    expect(
+        selected.optimal_representative_count == 2,
+        "selected-distance optimal count accepts ties");
+    expect(selected.non_optimal_count == 2, "selected-distance worse count");
+    expect(
+        selected.reference_improvement_count == 0,
+        "selected-distance improvement count");
+    expect_near(
+        selected.distance_ratio.mean,
+        (1.0 + 3.0 + 1.6) / 3.0,
+        "selected-distance mean ratio");
+    expect(
+        selected.returned_representative_rank.count == 0,
+        "selected-distance diagnostics do not infer ranks");
+    expect(
+        selected.margin_buckets.empty(),
+        "selected-distance diagnostics do not infer margins");
+    for (const auto& failure : selected.approximation_failures) {
+        expect(
+            failure.violation_count == 2,
+            "selected-distance epsilon violation count");
+    }
+
+    const ApproximationMetrics selected_improvement =
+        evaluate_selected_distances(
+            DistanceMetric::l1,
+            representatives,
+            queries,
+            1,
+            std::vector<std::size_t>{1},
+            std::vector<std::size_t>{0});
+    expect(
+        selected_improvement.reference_improvement_count == 1,
+        "a result better than the configured reference is reported");
+    expect(
+        selected_improvement.non_optimal_count == 0,
+        "a result better than the configured reference is not an error");
 
     return 0;
 }

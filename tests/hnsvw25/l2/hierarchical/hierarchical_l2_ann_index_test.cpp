@@ -1,5 +1,5 @@
-#include "hnsvw25/l2/hierarchical/hierarchical_l2_ann_index.hpp"
-#include "hnsvw25/l2/importance_sampling.hpp"
+#include "ultrahigh_ann/hnsvw25/l2/hierarchical/hierarchical_l2_ann_index.hpp"
+#include "ultrahigh_ann/hnsvw25/l2/importance_sampling.hpp"
 
 #include <array>
 #include <cstddef>
@@ -27,6 +27,7 @@ bool expect(bool condition, std::string_view message)
 int main()
 {
     using ultrahigh_ann::DenseMatrix;
+    using ultrahigh_ann::ExecutionPolicy;
     using ultrahigh_ann::HierarchicalL2AnnIndex;
 
     std::vector<float> values{
@@ -42,6 +43,13 @@ int main()
         repetitions,
         projection_dimension,
         random_engine);
+    std::mt19937_64 parallel_random_engine(42);
+    const HierarchicalL2AnnIndex parallel_index(
+        representatives,
+        repetitions,
+        projection_dimension,
+        parallel_random_engine,
+        ExecutionPolicy::cpu_parallel);
     const auto probabilities =
         ultrahigh_ann::compute_l2_importance_probabilities(
             representatives);
@@ -88,6 +96,12 @@ int main()
             cached_index.query(std::span<const float>{near_second}) ==
                 index.query(std::span<const float>{near_second}),
         "a precomputed probability model must reproduce the legacy index");
+    passed &= expect(
+        parallel_index.query(std::span<const float>{near_first}) ==
+                index.query(std::span<const float>{near_first}) &&
+            parallel_index.query(std::span<const float>{near_second}) ==
+                index.query(std::span<const float>{near_second}),
+        "the parallel policy must reproduce the sequential index");
 
     const std::array<float, 2> non_finite_sampled_coordinate{
         std::numeric_limits<float>::quiet_NaN(),

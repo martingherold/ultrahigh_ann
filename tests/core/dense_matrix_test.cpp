@@ -1,4 +1,6 @@
-#include "core/dense_matrix.hpp"
+#include "ultrahigh_ann/core/dense_matrix.hpp"
+
+#include "core/fp32_matrix_operations.hpp"
 
 #include <cmath>
 #include <iostream>
@@ -64,6 +66,23 @@ int main()
             std::abs(product.row(1)[1] - 2.0) < tolerance,
             "the fourth dot product must equal 2");
     }
+
+    const DenseMatrix cancellation_left(
+        std::vector<float>{16777216.0F, 1.0F, -16777216.0F}, 1, 3);
+    const DenseMatrix cancellation_right(
+        std::vector<float>{1.0F, 1.0F, 1.0F}, 1, 3);
+    const DenseMatrix fp32_product =
+        ultrahigh_ann::detail::multiply_right_transposed_fp32(
+            cancellation_left, cancellation_right, "test FP32 product");
+    const DenseMatrix binary64_accumulated_product =
+        DenseMatrix::multiply_right_transposed(
+            cancellation_left, cancellation_right);
+    passed &= expect(
+        fp32_product.row(0)[0] == 0.0F,
+        "the FP32 product must round after each accumulated operation");
+    passed &= expect(
+        binary64_accumulated_product.row(0)[0] == 1.0F,
+        "the default product must retain its binary64 accumulation");
 
     std::vector<double> incompatible_values{
         1.0, 2.0};

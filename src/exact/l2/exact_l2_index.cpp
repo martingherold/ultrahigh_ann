@@ -1,58 +1,32 @@
-#include "exact/l2/exact_l2_index.hpp"
-
-#include "core/finite_values.hpp"
-#include "core/l2_distance.hpp"
+#include "ultrahigh_ann/exact/l2/exact_l2_index.hpp"
 
 #include <cstddef>
 #include <span>
-#include <stdexcept>
 
 namespace ultrahigh_ann {
 
 ExactL2Index::ExactL2Index(const DenseMatrix& representatives)
-    : representatives_(representatives)
+    : scan_(representatives)
 {
-    if (representatives_.rows() == 0) {
-        throw std::invalid_argument(
-            "ExactL2Index expects at least one representative");
-    }
-    detail::validate_finite_values(
-        representatives_.values(),
-        "representatives");
 }
 
-std::size_t ExactL2Index::query(std::span<const float> query) const
+std::size_t ExactL2Index::query(std::span<const float> query,
+                                CpuDenseL2QueryStrategy strategy) const
 {
-    if (query.size() != representatives_.cols()) {
-        throw std::invalid_argument(
-            "query dimension does not match index dimension");
-    }
-    detail::validate_finite_values(query, "query");
+    return scan_.query(query, strategy);
+}
 
-    std::size_t nearest_index = 0;
-    double nearest_distance = detail::squared_l2_dist(
-        query,
-        representatives_.row(0));
-    for (std::size_t row = 1; row < representatives_.rows(); ++row) {
-        const double distance = detail::squared_l2_dist(
-            query,
-            representatives_.row(row));
-        if (distance < nearest_distance) {
-            nearest_distance = distance;
-            nearest_index = row;
-        }
-    }
-    return nearest_index;
+void ExactL2Index::query_batch(std::span<const float> queries,
+                               std::size_t query_count,
+                               std::span<std::size_t> output,
+                               CpuDenseL2QueryStrategy strategy) const
+{
+    scan_.query_batch(queries, query_count, output, strategy);
 }
 
 IndexSpaceUsage ExactL2Index::space_usage() const noexcept
 {
-    return IndexSpaceUsage{
-        .index_payload_bytes = representatives_.values().size_bytes(),
-        .query_workspace_payload_bytes = 0,
-        .unique_query_coordinates = representatives_.cols(),
-        .sampled_multiplicity = representatives_.cols(),
-    };
+    return scan_.space_usage();
 }
 
 }  // namespace ultrahigh_ann

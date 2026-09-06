@@ -1,4 +1,4 @@
-#include "coordinate_sampling/coordinate_sampling.hpp"
+#include "ultrahigh_ann/coordinate_sampling/coordinate_sampling.hpp"
 
 #include "core/finite_values.hpp"
 

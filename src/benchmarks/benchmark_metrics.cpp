@@ -299,6 +299,97 @@ ApproximationMetrics ExactDistanceTable::evaluate(
     return result;
 }
 
+ApproximationMetrics evaluate_selected_distances(
+    DistanceMetric metric,
+    const DenseMatrix& representatives,
+    const DenseMatrix& queries,
+    std::size_t query_count,
+    std::span<const std::size_t> reference_predictions,
+    std::span<const std::size_t> candidate_predictions)
+{
+    if (query_count == 0 || query_count > queries.rows() ||
+        reference_predictions.size() != query_count ||
+        candidate_predictions.size() != query_count) {
+        throw std::invalid_argument(
+            "selected-distance diagnostics received incompatible query data");
+    }
+    if (representatives.rows() == 0 ||
+        representatives.cols() != queries.cols()) {
+        throw std::invalid_argument(
+            "selected-distance diagnostics received incompatible matrices");
+    }
+
+    ApproximationMetrics result;
+    result.query_count = query_count;
+    for (std::size_t index = 0;
+         index < approximation_epsilons.size();
+         ++index) {
+        result.approximation_failures[index].epsilon =
+            approximation_epsilons[index];
+    }
+
+    std::vector<double> ratios;
+    ratios.reserve(query_count);
+    double conditional_ratio_sum{};
+    for (std::size_t query_index = 0; query_index < query_count;
+         ++query_index) {
+        const std::size_t reference = reference_predictions[query_index];
+        const std::size_t candidate = candidate_predictions[query_index];
+        if (reference >= representatives.rows() ||
+            candidate >= representatives.rows()) {
+            throw std::invalid_argument(
+                "selected-distance diagnostics received an invalid prediction");
+        }
+        const auto query = queries.row(query_index);
+        const double optimum = exact_distance(
+            metric, query, representatives.row(reference));
+        const double returned = exact_distance(
+            metric, query, representatives.row(candidate));
+        const bool no_worse_than_reference = returned <= optimum;
+        const bool worse_than_reference = returned > optimum;
+        const bool improved = returned < optimum;
+        result.optimal_representative_count +=
+            static_cast<std::size_t>(no_worse_than_reference);
+        result.non_optimal_count +=
+            static_cast<std::size_t>(worse_than_reference);
+        result.reference_improvement_count +=
+            static_cast<std::size_t>(improved);
+
+        if (optimum == 0.0) {
+            ++result.zero_optimum_query_count;
+            if (worse_than_reference) {
+                ++result.zero_optimum_non_optimal_count;
+            }
+        } else {
+            const double ratio = returned / optimum;
+            ratios.push_back(ratio);
+            if (worse_than_reference) {
+                conditional_ratio_sum += ratio;
+                ++result.conditional_non_optimal_ratio_count;
+            }
+        }
+        for (std::size_t index = 0;
+             index < approximation_epsilons.size();
+            ++index) {
+            const bool violation = optimum == 0.0
+                ? worse_than_reference
+                : returned / optimum > 1.0 + approximation_epsilons[index];
+            result.approximation_failures[index].violation_count +=
+                static_cast<std::size_t>(violation);
+        }
+    }
+
+    result.distance_ratio = summarize(std::move(ratios));
+    if (result.conditional_non_optimal_ratio_count != 0) {
+        const double mean_ratio =
+            conditional_ratio_sum /
+            static_cast<double>(result.conditional_non_optimal_ratio_count);
+        result.conditional_mean_distance_ratio = mean_ratio;
+        result.conditional_mean_relative_excess = mean_ratio - 1.0;
+    }
+    return result;
+}
+
 std::size_t ExactDistanceTable::payload_bytes() const noexcept
 {
     return distances_.size() * sizeof(double) +

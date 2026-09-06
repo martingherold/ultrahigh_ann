@@ -1,7 +1,7 @@
 #pragma once
 
-#include "core/dense_matrix.hpp"
-#include "coordinate_sampling/coordinate_sample.hpp"
+#include "ultrahigh_ann/core/dense_matrix.hpp"
+#include "ultrahigh_ann/coordinate_sampling/coordinate_sample.hpp"
 
 #include <span>
 

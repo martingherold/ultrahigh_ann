@@ -1,12 +1,12 @@
 #include "benchmark_setup.hpp"
 
 #include <chrono>
-#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -62,142 +62,271 @@ void expect_failure(Function&& function, std::string_view expected_message)
     try {
         function();
     } catch (const std::runtime_error& error) {
-        expect(
-            std::string_view(error.what()).find(expected_message) !=
-                std::string_view::npos,
-            "unexpected setup-parser error");
+        expect(std::string_view(error.what()).find(expected_message) !=
+                   std::string_view::npos,
+               "unexpected setup-parser error");
         return;
     }
     throw std::runtime_error("expected setup parsing to fail");
 }
 
-void test_loads_flat_uniform_and_hierarchical_runs()
+void test_loads_cpu_and_cuda_runs()
 {
+    using namespace ultrahigh_ann::benchmark;
     const TemporaryDirectory temporary;
-    const std::filesystem::path setup_path = temporary.path() / "suite.tsv";
+    const auto path = temporary.path() / "suite.tsv";
     write_text(
-        setup_path,
-        "# benchmark suite\n"
-        "ultrahigh_ann_benchmark_setup_v1\n"
+        path,
+        "ultrahigh_ann_benchmark_setup_v2\n"
         "dataset\t../dataset\n"
-        "output\tresults/report.json\n"
+        "json_output\tresults/report.json\n"
+        "csv_output\tresults/trials.csv\n"
+        "probabilities\tcache/l2.uap\n"
         "distance\tl2\n"
+        "reference\texact_cuda\n"
         "max_queries\t123\n"
-        "run\tflat_t128_seed42\tflat\trepetitions=128\tseed=42\n"
-        "run\tuniform_t128_seed42\tuniform\trepetitions=128\tseed=42\n"
-        "run\thier_t256_p31\thierarchical\trepetitions=256\tseed=7\t"
+        "warmups\t1\n"
+        "trials\t5\n"
+        "batch_sizes\t32,128\n"
+        "diagnostics\tselected_distances\n"
+        "run\texact_cuda\texact\tbackend=cuda\tstrategy=gemm\n"
+        "run\tflat_cpu\tflat\tbackend=cpu\tstrategy=parallel_queries\t"
+        "repetitions=64\tseed=42\tbatch_sizes=123\n"
+        "run\thier\thierarchical\trepetitions=128\tseed=7\t"
         "projection_dimension=31\n");
 
-    const auto setup =
-        ultrahigh_ann::benchmark::load_benchmark_setup(setup_path);
-    expect(setup.maximum_queries == 123, "maximum query count changed");
-    expect(
-        setup.distance == ultrahigh_ann::benchmark::DistanceMetric::l2,
-        "distance metric changed");
+    const BenchmarkSetup setup = load_benchmark_setup(path);
+    expect(setup.distance == DistanceMetric::l2, "distance changed");
+    expect(setup.maximum_queries == 123, "query limit changed");
+    expect(setup.reference_run == "exact_cuda", "reference changed");
+    expect(setup.probability_policy == ProbabilityPolicy::load,
+           "probability file should imply load policy");
     expect(setup.runs.size() == 3, "run count changed");
-    expect(
-        setup.dataset_directory ==
-            (temporary.path() / "../dataset").lexically_normal(),
-        "dataset path was not resolved relative to setup");
-    expect(
-        setup.output_path ==
-            (temporary.path() / "results/report.json").lexically_normal(),
-        "output path was not resolved relative to setup");
-    expect(
-        setup.runs[0].method ==
-            ultrahigh_ann::benchmark::ApproximateMethod::flat,
-        "flat method changed");
-    expect(setup.runs[0].repetitions == 128, "flat repetitions changed");
-    expect(setup.runs[0].seed == 42, "flat seed changed");
-    expect(
-        setup.runs[1].method ==
-            ultrahigh_ann::benchmark::ApproximateMethod::uniform,
-        "uniform method changed");
-    expect(
-        setup.runs[1].repetitions == 128,
-        "uniform repetitions changed");
-    expect(setup.runs[1].seed == 42, "uniform seed changed");
-    expect(
-        setup.runs[2].method ==
-            ultrahigh_ann::benchmark::ApproximateMethod::hierarchical,
-        "hierarchical method changed");
-    expect(
-        setup.runs[2].projection_dimension == 31,
-        "projection dimension changed");
+    expect(setup.runs[0].backend == ExecutionBackend::cuda,
+           "CUDA backend changed");
+    expect(setup.runs[0].strategy == QueryStrategy::gemm,
+           "GEMM strategy changed");
+    expect(setup.runs[0].batch_sizes.size() == 2,
+           "global batch sizes not inherited");
+    expect(setup.runs[1].strategy == QueryStrategy::parallel_queries,
+           "CPU strategy changed");
+    expect(setup.runs[1].batch_sizes == std::vector<std::size_t>{123},
+           "run batch override changed");
+    expect(setup.runs[2].projection_dimension == 31,
+           "projection dimension changed");
+    expect(setup.json_output_path ==
+               (temporary.path() / "results/report.json").lexically_normal(),
+           "JSON output path resolution changed");
+    expect(setup.representatives_path ==
+               (temporary.path() / "../dataset/representatives.npy")
+                   .lexically_normal(),
+           "dataset file path resolution changed");
 }
 
-void test_rejects_duplicate_names_and_wrong_parameters()
+void test_rejects_invalid_reference_and_backend_strategy()
 {
     const TemporaryDirectory temporary;
-    const std::filesystem::path duplicate = temporary.path() / "duplicate.tsv";
+    const auto reference = temporary.path() / "reference.tsv";
     write_text(
-        duplicate,
-        "ultrahigh_ann_benchmark_setup_v1\n"
+        reference,
+        "ultrahigh_ann_benchmark_setup_v2\n"
         "dataset\tdataset\n"
-        "output\treport.json\n"
-        "run\tsame\tflat\trepetitions=128\tseed=1\n"
-        "run\tsame\tflat\trepetitions=256\tseed=2\n");
+        "json_output\treport.json\n"
+        "csv_output\treport.csv\n"
+        "reference\tflat\n"
+        "run\tflat\tflat\trepetitions=1\tseed=1\n");
     expect_failure(
-        [&duplicate] {
+        [&] {
             static_cast<void>(
-                ultrahigh_ann::benchmark::load_benchmark_setup(duplicate));
+                ultrahigh_ann::benchmark::load_benchmark_setup(reference));
         },
-        "duplicate run name");
+        "reference run must use the exact index");
 
-    const std::filesystem::path wrong = temporary.path() / "wrong.tsv";
+    const auto strategy = temporary.path() / "strategy.tsv";
     write_text(
-        wrong,
-        "ultrahigh_ann_benchmark_setup_v1\n"
+        strategy,
+        "ultrahigh_ann_benchmark_setup_v2\n"
         "dataset\tdataset\n"
-        "output\treport.json\n"
-        "run\tflat\tflat\trepetitions=128\tseed=1\t"
-        "projection_dimension=31\n");
+        "json_output\treport.json\n"
+        "csv_output\treport.csv\n"
+        "reference\texact\n"
+        "run\texact\texact\tbackend=cpu\tstrategy=gemm\n");
     expect_failure(
-        [&wrong] {
+        [&] {
             static_cast<void>(
-                ultrahigh_ann::benchmark::load_benchmark_setup(wrong));
+                ultrahigh_ann::benchmark::load_benchmark_setup(strategy));
         },
-        "unsupported parameter for flat");
+        "CPU runs cannot use direct or gemm");
 }
 
-void test_defaults_to_l1_and_rejects_unknown_distance()
+void test_rejects_version_one_and_duplicate_outputs()
 {
     const TemporaryDirectory temporary;
-    const std::filesystem::path default_l1 = temporary.path() / "l1.tsv";
-    write_text(
-        default_l1,
-        "ultrahigh_ann_benchmark_setup_v1\n"
-        "dataset\tdataset\n"
-        "output\treport.json\n"
-        "run\tflat\tflat\trepetitions=1\tseed=1\n");
-    const auto setup =
-        ultrahigh_ann::benchmark::load_benchmark_setup(default_l1);
-    expect(
-        setup.distance == ultrahigh_ann::benchmark::DistanceMetric::l1,
-        "omitting distance must preserve the version-one L1 default");
-
-    const std::filesystem::path unknown = temporary.path() / "unknown.tsv";
-    write_text(
-        unknown,
-        "ultrahigh_ann_benchmark_setup_v1\n"
-        "dataset\tdataset\n"
-        "output\treport.json\n"
-        "distance\tcosine\n"
-        "run\tflat\tflat\trepetitions=1\tseed=1\n");
+    const auto old = temporary.path() / "old.tsv";
+    write_text(old, "ultrahigh_ann_benchmark_setup_v1\n");
     expect_failure(
-        [&unknown] {
+        [&] {
             static_cast<void>(
-                ultrahigh_ann::benchmark::load_benchmark_setup(unknown));
+                ultrahigh_ann::benchmark::load_benchmark_setup(old));
         },
-        "unknown distance metric");
+        "expected format header ultrahigh_ann_benchmark_setup_v2");
+
+    const auto same_output = temporary.path() / "same-output.tsv";
+    write_text(
+        same_output,
+        "ultrahigh_ann_benchmark_setup_v2\n"
+        "dataset\tdataset\n"
+        "json_output\treport.out\n"
+        "csv_output\treport.out\n"
+        "reference\texact\n"
+        "run\texact\texact\n");
+    expect_failure(
+        [&] {
+            static_cast<void>(ultrahigh_ann::benchmark::load_benchmark_setup(
+                same_output));
+        },
+        "json_output and csv_output must differ");
+}
+
+void test_loads_cublas_probability_policy()
+{
+    using namespace ultrahigh_ann::benchmark;
+    const TemporaryDirectory temporary;
+    const auto path = temporary.path() / "cublas.tsv";
+    write_text(
+        path,
+        "ultrahigh_ann_benchmark_setup_v2\n"
+        "dataset\tdataset\n"
+        "json_output\treport.json\n"
+        "csv_output\treport.csv\n"
+        "distance\tl2\n"
+        "probability_policy\tgpu_cublas_fp32\n"
+        "reference\texact\n"
+        "run\texact\texact\n"
+        "run\tflat\tflat\trepetitions=8\tseed=42\n");
+
+    const BenchmarkSetup setup = load_benchmark_setup(path);
+    expect(setup.probability_policy == ProbabilityPolicy::gpu_cublas_fp32,
+           "cuBLAS probability policy changed");
+    expect(probability_policy_name(setup.probability_policy) ==
+               "gpu_cublas_fp32",
+           "cuBLAS probability policy name changed");
+
+    const auto l1_path = temporary.path() / "l1-cublas.tsv";
+    write_text(
+        l1_path,
+        "ultrahigh_ann_benchmark_setup_v2\n"
+        "dataset\tdataset\n"
+        "json_output\treport.json\n"
+        "csv_output\treport.csv\n"
+        "distance\tl1\n"
+        "probability_policy\tgpu_cublas_fp32\n"
+        "reference\texact\n"
+        "run\texact\texact\n"
+        "run\tflat\tflat\trepetitions=8\tseed=42\n");
+    expect_failure(
+        [&] { static_cast<void>(load_benchmark_setup(l1_path)); },
+        "gpu_cublas_fp32 is unavailable for L1");
+}
+
+void test_loads_l1_cuda_runs_and_rejects_nonhierarchical_gemm()
+{
+    using namespace ultrahigh_ann::benchmark;
+    const TemporaryDirectory temporary;
+    const auto valid = temporary.path() / "l1-cuda.tsv";
+    write_text(
+        valid,
+        "ultrahigh_ann_benchmark_setup_v2\n"
+        "dataset\tdataset\n"
+        "json_output\treport.json\n"
+        "csv_output\treport.csv\n"
+        "distance\tl1\n"
+        "reference\texact_cuda\n"
+        "run\texact_cuda\texact\tbackend=cuda\n"
+        "run\tflat_cuda\tflat\tbackend=cuda\tstrategy=direct\t"
+        "repetitions=8\tseed=42\n");
+
+    const BenchmarkSetup setup = load_benchmark_setup(valid);
+    expect(setup.runs.size() == 2, "L1 CUDA run count changed");
+    expect(setup.runs[0].strategy == QueryStrategy::direct,
+           "L1 CUDA must default to direct queries");
+    expect(setup.runs[1].backend == ExecutionBackend::cuda,
+           "L1 CUDA backend changed");
+
+    const auto invalid = temporary.path() / "l1-gemm.tsv";
+    write_text(
+        invalid,
+        "ultrahigh_ann_benchmark_setup_v2\n"
+        "dataset\tdataset\n"
+        "json_output\treport.json\n"
+        "csv_output\treport.csv\n"
+        "distance\tl1\n"
+        "reference\texact_cuda\n"
+        "run\texact_cuda\texact\tbackend=cuda\tstrategy=gemm\n");
+    expect_failure(
+        [&] {
+            static_cast<void>(load_benchmark_setup(invalid));
+        },
+        "CUDA L1 exact, flat, and uniform strategies must be direct");
+}
+
+void test_loads_cuda_hierarchies()
+{
+    using namespace ultrahigh_ann::benchmark;
+    const TemporaryDirectory temporary;
+    const auto valid = temporary.path() / "l2-cuda-hierarchy.tsv";
+    write_text(
+        valid,
+        "ultrahigh_ann_benchmark_setup_v2\n"
+        "dataset\tdataset\n"
+        "json_output\treport.json\n"
+        "csv_output\treport.csv\n"
+        "distance\tl2\n"
+        "reference\texact_cuda\n"
+        "run\texact_cuda\texact\tbackend=cuda\tstrategy=direct\n"
+        "run\thier_direct\thierarchical\tbackend=cuda\tstrategy=direct\t"
+        "repetitions=8\tseed=42\tprojection_dimension=17\n"
+        "run\thier_gemm\thierarchical\tbackend=cuda\tstrategy=gemm\t"
+        "repetitions=8\tseed=43\tprojection_dimension=17\n");
+
+    const BenchmarkSetup setup = load_benchmark_setup(valid);
+    expect(setup.runs.size() == 3, "CUDA hierarchy run count changed");
+    expect(setup.runs[1].strategy == QueryStrategy::direct,
+           "CUDA hierarchy direct strategy changed");
+    expect(setup.runs[2].strategy == QueryStrategy::gemm,
+           "CUDA hierarchy GEMM strategy changed");
+
+    const auto l1 = temporary.path() / "l1-cuda-hierarchy.tsv";
+    write_text(
+        l1,
+        "ultrahigh_ann_benchmark_setup_v2\n"
+        "dataset\tdataset\n"
+        "json_output\treport.json\n"
+        "csv_output\treport.csv\n"
+        "distance\tl1\n"
+        "reference\texact_cuda\n"
+        "run\texact_cuda\texact\tbackend=cuda\n"
+        "run\thier_direct\thierarchical\tbackend=cuda\tstrategy=direct\t"
+        "repetitions=8\tseed=42\tprojection_dimension=17\n"
+        "run\thier_gemm\thierarchical\tbackend=cuda\tstrategy=gemm\t"
+        "repetitions=8\tseed=43\tprojection_dimension=17\n");
+    const BenchmarkSetup l1_setup = load_benchmark_setup(l1);
+    expect(l1_setup.runs.size() == 3, "CUDA L1 hierarchy run count changed");
+    expect(l1_setup.runs[1].strategy == QueryStrategy::direct,
+           "CUDA L1 hierarchy direct strategy changed");
+    expect(l1_setup.runs[2].strategy == QueryStrategy::gemm,
+           "CUDA L1 hierarchy GEMM strategy changed");
 }
 
 }  // namespace
 
 int main()
 {
-    test_loads_flat_uniform_and_hierarchical_runs();
-    test_rejects_duplicate_names_and_wrong_parameters();
-    test_defaults_to_l1_and_rejects_unknown_distance();
+    test_loads_cpu_and_cuda_runs();
+    test_rejects_invalid_reference_and_backend_strategy();
+    test_rejects_version_one_and_duplicate_outputs();
+    test_loads_cublas_probability_policy();
+    test_loads_l1_cuda_runs_and_rejects_nonhierarchical_gemm();
+    test_loads_cuda_hierarchies();
     return 0;
 }

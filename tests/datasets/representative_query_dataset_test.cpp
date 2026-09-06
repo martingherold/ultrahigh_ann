@@ -1,4 +1,4 @@
-#include "datasets/representative_query_dataset.hpp"
+#include "ultrahigh_ann/datasets/representative_query_dataset.hpp"
 
 #include <array>
 #include <chrono>
@@ -126,6 +126,15 @@ int main()
         "<f4",
         representative_shape,
         representatives);
+    const ultrahigh_ann::DenseMatrix representative_matrix =
+        ultrahigh_ann::load_representative_matrix(directory.path());
+
+    bool passed = true;
+    passed &= expect(
+        representative_matrix.rows() == 2 &&
+            representative_matrix.cols() == 3 &&
+            representative_matrix.row(1)[2] == 6.0F,
+        "the representative-only loader must preserve shape and values");
 
     const std::array<std::size_t, 2> query_shape{3, 3};
     const std::array<float, 9> queries{
@@ -150,7 +159,6 @@ int main()
         ultrahigh_ann::load_representative_query_dataset(
             directory.path());
 
-    bool passed = true;
     passed &= expect(
         dataset.representatives.rows() == 2 &&
             dataset.representatives.cols() == 3,

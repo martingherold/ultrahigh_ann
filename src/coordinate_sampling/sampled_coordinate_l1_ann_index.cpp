@@ -1,11 +1,12 @@
-#include "coordinate_sampling/sampled_coordinate_l1_ann_index.hpp"
+#include "ultrahigh_ann/coordinate_sampling/sampled_coordinate_l1_ann_index.hpp"
 
 #include "core/finite_values.hpp"
-#include "coordinate_sampling/coordinate_sampling.hpp"
+#include "ultrahigh_ann/coordinate_sampling/coordinate_sampling.hpp"
 #include "coordinate_sampling/filter_columns.hpp"
 
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <span>
 #include <stdexcept>
 #include <utility>
@@ -27,6 +28,36 @@ namespace {
         probabilities,
         repetitions,
         random_engine);
+}
+
+[[nodiscard]] CoordinateSample validate_coordinate_sample(
+    const DenseMatrix& input,
+    CoordinateSample coordinate_sample)
+{
+    std::size_t sampled_multiplicity = 0;
+    for (const SampledColumn& column : coordinate_sample.columns) {
+        if (column.source_column >= input.cols()) {
+            throw std::out_of_range("sampled column index out of range");
+        }
+        if (column.multiplicity == 0 ||
+            !std::isfinite(column.inverse_probability) ||
+            column.inverse_probability <= 0.0) {
+            throw std::invalid_argument(
+                "sampled columns require positive finite weights");
+        }
+        if (sampled_multiplicity >
+            std::numeric_limits<std::size_t>::max() - column.multiplicity) {
+            throw std::length_error("sampled multiplicity overflows");
+        }
+        sampled_multiplicity += column.multiplicity;
+        const double weight = static_cast<double>(column.multiplicity) *
+                              column.inverse_probability;
+        if (!std::isfinite(weight) || weight <= 0.0) {
+            throw std::invalid_argument(
+                "sampled coordinate weight must be positive and finite");
+        }
+    }
+    return coordinate_sample;
 }
 
 [[nodiscard]] double weighted_l1_distance(
@@ -71,7 +102,8 @@ SampledCoordinateL1AnnIndex::SampledCoordinateL1AnnIndex(
 SampledCoordinateL1AnnIndex::SampledCoordinateL1AnnIndex(
     const DenseMatrix& input,
     CoordinateSample coordinate_sample)
-    : coordinate_sample_(std::move(coordinate_sample)),
+    : coordinate_sample_(
+          validate_coordinate_sample(input, std::move(coordinate_sample))),
       sampled_representatives_(
           filter_columns(input, coordinate_sample_.columns)),
       initial_cols_(input.cols())
@@ -80,6 +112,8 @@ SampledCoordinateL1AnnIndex::SampledCoordinateL1AnnIndex(
         throw std::invalid_argument(
             "SampledCoordinateL1AnnIndex expects at least one representative");
     }
+    detail::validate_finite_values(sampled_representatives_.values(),
+                                   "sampled representatives");
 }
 
 std::size_t SampledCoordinateL1AnnIndex::query(

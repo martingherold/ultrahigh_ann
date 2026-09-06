@@ -1,10 +1,8 @@
-#include "hnsvw25/l2/hierarchical/hierarchical_l2_ann_index.hpp"
+#include "ultrahigh_ann/hnsvw25/l2/hierarchical/hierarchical_l2_ann_index.hpp"
 
-#include "core/finite_values.hpp"
-#include "coordinate_sampling/filter_columns.hpp"
-#include "hnsvw25/l2/importance_sampling.hpp"
+#include "hnsvw25/l2/hierarchical/l2_hierarchical_projection.hpp"
+#include "ultrahigh_ann/hnsvw25/l2/importance_sampling.hpp"
 
-#include <cmath>
 #include <cstddef>
 #include <random>
 #include <span>
@@ -33,13 +31,15 @@ void validate_index_parameters(
     const DenseMatrix& input,
     std::size_t repetitions,
     std::size_t projection_dimension,
-    std::mt19937_64& random_engine)
+    std::mt19937_64& random_engine,
+    ExecutionPolicy execution_policy)
 {
     validate_index_parameters(input, projection_dimension);
     return build_l2_importance_sample(
         input,
         repetitions,
-        random_engine);
+        random_engine,
+        execution_policy);
 }
 
 [[nodiscard]] CoordinateSample build_importance_sample_checked(
@@ -58,66 +58,6 @@ void validate_index_parameters(
         probabilities,
         repetitions,
         random_engine);
-}
-
-[[nodiscard]] DoubleDenseMatrix build_jl_matrix(
-    const CoordinateSample& importance_sample,
-    std::size_t rows,
-    std::mt19937_64& random_engine)
-{
-    const std::size_t columns = importance_sample.columns.size();
-    const std::size_t maximum_size = std::vector<double>{}.max_size();
-    if (columns != 0 && rows > maximum_size / columns) {
-        throw std::length_error("JL matrix dimensions overflow");
-    }
-
-    const double row_scaling = 1.0 / std::sqrt(static_cast<double>(rows));
-    std::vector<double> data;
-    data.reserve(rows * columns);
-    for (std::size_t row = 0; row < rows; ++row) {
-        for (const SampledColumn& sample : importance_sample.columns) {
-            std::binomial_distribution<std::size_t> positive_signs(
-                sample.multiplicity,
-                0.5);
-            const std::size_t positives = positive_signs(random_engine);
-            const double signed_sum =
-                2.0 * static_cast<double>(positives) -
-                static_cast<double>(sample.multiplicity);
-            const double coefficient =
-                signed_sum *
-                std::sqrt(sample.inverse_probability) *
-                row_scaling;
-            detail::validate_finite_result(
-                coefficient,
-                "JL projection coefficient");
-            data.push_back(coefficient);
-        }
-    }
-    return DoubleDenseMatrix(std::move(data), rows, columns);
-}
-
-void project_sampled_query(
-    std::span<const float> sampled_query,
-    const DoubleDenseMatrix& matrix,
-    std::span<double> output)
-{
-    if (sampled_query.size() != matrix.cols()) {
-        throw std::logic_error(
-            "sampled query and JL dimensions do not match");
-    }
-    if (output.size() != matrix.rows()) {
-        throw std::logic_error(
-            "projected query dimensions do not match");
-    }
-    for (std::size_t projection = 0; projection < matrix.rows(); ++projection) {
-        const auto coefficients = matrix.row(projection);
-        double sum = 0.0;
-        for (std::size_t column = 0; column < sampled_query.size(); ++column) {
-            sum += static_cast<double>(sampled_query[column]) *
-                   coefficients[column];
-        }
-        output[projection] = sum;
-    }
 }
 
 [[nodiscard]] double squared_l2_dist(
@@ -142,14 +82,16 @@ HierarchicalL2AnnIndex::HierarchicalL2AnnIndex(
     const DenseMatrix& input,
     std::size_t repetitions,
     std::size_t projection_dimension,
-    std::mt19937_64& random_engine)
+    std::mt19937_64& random_engine,
+    ExecutionPolicy execution_policy)
     : HierarchicalL2AnnIndex(
           input,
           build_importance_sample_checked(
               input,
               repetitions,
               projection_dimension,
-              random_engine),
+              random_engine,
+              execution_policy),
           projection_dimension,
           random_engine)
 {
@@ -179,26 +121,16 @@ HierarchicalL2AnnIndex::HierarchicalL2AnnIndex(
     CoordinateSample importance_sample,
     std::size_t projection_dimension,
     std::mt19937_64& random_engine)
-    : importance_sample_(std::move(importance_sample)),
-      initial_cols_(input.cols())
+    : initial_cols_(input.cols())
 {
-    if (importance_sample_.columns.empty() && input.rows() > 1) {
-        throw std::runtime_error(
-            "importance sampling selected no coordinates");
-    }
-    const DenseMatrix sampled_representatives = filter_columns(
-        input,
-        importance_sample_.columns);
-    jl_matrix_ = build_jl_matrix(
-        importance_sample_,
-        projection_dimension,
+    auto projection = detail::build_l2_hierarchical_projection(
+        input, std::move(importance_sample), projection_dimension,
         random_engine);
-    reduced_representatives_ = DenseMatrix::multiply_right_transposed(
-        sampled_representatives,
-        jl_matrix_);
-    detail::validate_finite_result(
-        reduced_representatives_.values(),
-        "projected representatives");
+    importance_sample_ = std::move(projection.importance_sample);
+    initial_cols_ = projection.original_dimension;
+    jl_matrix_ = std::move(projection.jl_matrix);
+    reduced_representatives_ =
+        std::move(projection.projected_representatives);
 }
 
 HierarchicalL2AnnIndex::QueryWorkspace
@@ -230,22 +162,10 @@ std::size_t HierarchicalL2AnnIndex::query(
     }
 
     workspace.sampled_values_.resize(importance_sample_.columns.size());
-    for (std::size_t index = 0;
-         index < importance_sample_.columns.size();
-         ++index) {
-        const SampledColumn& column = importance_sample_.columns[index];
-        const float value = query[column.source_column];
-        detail::validate_finite_value(value, "sampled query coordinate");
-        workspace.sampled_values_[index] = value;
-    }
     workspace.projected_query_.resize(jl_matrix_.rows());
-    project_sampled_query(
-        workspace.sampled_values_,
-        jl_matrix_,
-        workspace.projected_query_);
-    detail::validate_finite_result(
-        std::span<const double>{workspace.projected_query_},
-        "projected query");
+    detail::project_l2_hierarchical_query(
+        query, initial_cols_, importance_sample_.columns, jl_matrix_,
+        workspace.sampled_values_, workspace.projected_query_);
 
     const std::span<const double> projected_query{
         workspace.projected_query_};

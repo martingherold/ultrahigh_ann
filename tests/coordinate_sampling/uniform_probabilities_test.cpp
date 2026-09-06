@@ -1,4 +1,4 @@
-#include "coordinate_sampling/uniform_probabilities.hpp"
+#include "ultrahigh_ann/coordinate_sampling/uniform_probabilities.hpp"
 
 #include <array>
 #include <cmath>

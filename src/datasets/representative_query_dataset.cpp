@@ -1,6 +1,6 @@
-#include "datasets/representative_query_dataset.hpp"
+#include "ultrahigh_ann/datasets/representative_query_dataset.hpp"
 
-#include "core/dense_matrix.hpp"
+#include "ultrahigh_ann/core/dense_matrix.hpp"
 
 #include <array>
 #include <bit>
@@ -293,7 +293,7 @@ load_npy_array(
     return {std::move(values), std::move(header.shape)};
 }
 
-[[nodiscard]] DenseMatrix load_float_matrix(
+[[nodiscard]] DenseMatrix load_float_matrix_impl(
     const std::filesystem::path& path)
 {
     auto [values, shape] = load_npy_array<float>(path, "<f4");
@@ -323,13 +323,38 @@ load_npy_array(
 
 }  // namespace
 
+DenseMatrix load_float_matrix_npy(const std::filesystem::path& path)
+{
+    return load_float_matrix_impl(path);
+}
+
+std::vector<std::size_t> load_label_vector_npy(
+    const std::filesystem::path& path)
+{
+    return load_labels(path);
+}
+
+DenseMatrix load_representative_matrix(
+    const std::filesystem::path& directory)
+{
+    DenseMatrix representatives =
+        load_float_matrix_npy(directory / "representatives.npy");
+    if (representatives.rows() == 0) {
+        throw std::runtime_error("dataset has no representatives");
+    }
+    if (representatives.cols() == 0) {
+        throw std::runtime_error("dataset has no features");
+    }
+    return representatives;
+}
+
 RepresentativeQueryDataset load_representative_query_dataset(
     const std::filesystem::path& directory)
 {
     DenseMatrix representatives =
-        load_float_matrix(directory / "representatives.npy");
+        load_representative_matrix(directory);
     DenseMatrix queries =
-        load_float_matrix(directory / "queries.npy");
+        load_float_matrix_npy(directory / "queries.npy");
     std::vector<std::size_t> query_labels =
         load_labels(directory / "query_labels.npy");
     const std::filesystem::path representative_labels_path =
@@ -345,14 +370,8 @@ RepresentativeQueryDataset load_representative_query_dataset(
             std::size_t{0});
     }
 
-    if (representatives.rows() == 0) {
-        throw std::runtime_error("dataset has no representatives");
-    }
     if (queries.rows() == 0) {
         throw std::runtime_error("dataset has no queries");
-    }
-    if (representatives.cols() == 0) {
-        throw std::runtime_error("dataset has no features");
     }
     if (representatives.cols() != queries.cols()) {
         throw std::runtime_error(

@@ -1,9 +1,7 @@
-#include "hnsvw25/l1/hierarchical/hierarchical_l1_ann_index.hpp"
+#include "ultrahigh_ann/hnsvw25/l1/hierarchical/hierarchical_l1_ann_index.hpp"
 
-#include "core/dense_matrix.hpp"
-#include "core/finite_values.hpp"
-#include "coordinate_sampling/filter_columns.hpp"
-#include "hnsvw25/l1/importance_sampling.hpp"
+#include "hnsvw25/l1/hierarchical/l1_hierarchical_projection.hpp"
+#include "ultrahigh_ann/hnsvw25/l1/importance_sampling.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -38,13 +36,12 @@ void validate_index_parameters(
     const DenseMatrix& input,
     std::size_t repetitions,
     std::size_t projection_dimension,
-    std::mt19937_64& random_engine)
+    std::mt19937_64& random_engine,
+    ExecutionPolicy execution_policy)
 {
     validate_index_parameters(input, projection_dimension);
-    return build_importance_sample(
-        input,
-        repetitions,
-        random_engine);
+    return build_l1_importance_sample(input, repetitions, random_engine,
+                                      execution_policy);
 }
 
 [[nodiscard]] CoordinateSample build_importance_sample_checked(
@@ -63,46 +60,6 @@ void validate_index_parameters(
         probabilities,
         repetitions,
         random_engine);
-}
-
-[[nodiscard]] DoubleDenseMatrix build_cauchy_matrix(
-    const CoordinateSample& importance_sample,
-    std::size_t rows,
-    std::mt19937_64& random_engine)
-{
-    const std::size_t columns =
-        importance_sample.columns.size();
-    const std::size_t maximum_size =
-        std::vector<double>{}.max_size();
-    if (columns != 0 && rows > maximum_size / columns) {
-        throw std::length_error(
-            "Cauchy matrix dimensions overflow");
-    }
-
-    std::vector<double> result_data;
-    result_data.reserve(rows * columns);
-    std::cauchy_distribution<double> cauchy(0.0, 1.0);
-
-    for (std::size_t row = 0; row < rows; ++row) {
-        for (const SampledColumn& sample :
-             importance_sample.columns) {
-            const double coefficient =
-                cauchy(random_engine) *
-                sample.inverse_probability *
-                static_cast<double>(sample.multiplicity);
-
-            detail::validate_finite_result(
-                coefficient,
-                "Cauchy projection coefficient");
-
-            result_data.push_back(coefficient);
-        }
-    }
-
-    return DoubleDenseMatrix(
-        std::move(result_data),
-        rows,
-        columns);
 }
 
 [[nodiscard]] double median_absolute_difference(
@@ -124,15 +81,11 @@ void validate_index_parameters(
     }
 
     for (std::size_t index = 0; index < first.size(); ++index) {
-        differences[index] =
-        std::abs(first[index] - second[index]);
+        differences[index] = std::abs(first[index] - second[index]);
     }
 
-
-    auto upper_middle =
-        differences.begin() +
-        static_cast<std::ptrdiff_t>(
-            differences.size() / 2);
+    auto upper_middle = differences.begin() +
+                        static_cast<std::ptrdiff_t>(differences.size() / 2);
 
     std::ranges::nth_element(differences, upper_middle);
 
@@ -140,42 +93,9 @@ void validate_index_parameters(
         return *upper_middle;
     }
 
-    const auto lower_middle = std::ranges::max_element(differences.begin(), upper_middle);
-    return (*lower_middle + *upper_middle) / 2.0;
-}
-
-void project_sampled_query(
-    std::span<const float> sampled_query,
-    const DoubleDenseMatrix& cauchy_matrix,
-    std::span<double> output)
-{
-    if (sampled_query.size() != cauchy_matrix.cols()) {
-        throw std::logic_error(
-            "sampled query and Cauchy dimensions do not match");
-    }
-    if (output.size() != cauchy_matrix.rows()) {
-        throw std::logic_error(
-            "projected query dimensions do not match");
-    }
-
-    for (std::size_t projection = 0;
-         projection < cauchy_matrix.rows();
-         ++projection) {
-        const auto coefficients =
-            cauchy_matrix.row(projection);
-        double sum = 0.0;
-
-        for (std::size_t column = 0;
-             column < sampled_query.size();
-             ++column) {
-            sum +=
-                static_cast<double>(
-                    sampled_query[column]) *
-                coefficients[column];
-        }
-
-        output[projection] = sum;
-    }
+    const auto lower_middle =
+        std::ranges::max_element(differences.begin(), upper_middle);
+    return *lower_middle + (*upper_middle - *lower_middle) * 0.5;
 }
 
 }  // namespace
@@ -185,13 +105,25 @@ HierarchicalL1AnnIndex::HierarchicalL1AnnIndex(
     std::size_t repetitions,
     std::size_t projection_dimension,
     std::mt19937_64& random_engine)
+    : HierarchicalL1AnnIndex(input, repetitions, projection_dimension,
+                             random_engine, ExecutionPolicy::sequential)
+{
+}
+
+HierarchicalL1AnnIndex::HierarchicalL1AnnIndex(
+    const DenseMatrix& input,
+    std::size_t repetitions,
+    std::size_t projection_dimension,
+    std::mt19937_64& random_engine,
+    ExecutionPolicy execution_policy)
     : HierarchicalL1AnnIndex(
           input,
           build_importance_sample_checked(
               input,
               repetitions,
               projection_dimension,
-              random_engine),
+              random_engine,
+              execution_policy),
           projection_dimension,
           random_engine)
 {
@@ -221,37 +153,16 @@ HierarchicalL1AnnIndex::HierarchicalL1AnnIndex(
     CoordinateSample importance_sample,
     std::size_t projection_dimension,
     std::mt19937_64& random_engine)
-    : importance_sample_(std::move(importance_sample)),
-      initial_cols_(input.cols())
+    : initial_cols_(input.cols())
 {
-    const std::size_t rows = input.rows();
-
-    const std::size_t columns =
-        importance_sample_.columns.size();
-    if (columns == 0 && rows > 1) {
-        throw std::runtime_error(
-            "importance sampling selected no coordinates");
-    }
-
-    DenseMatrix sampled_representatives =
-        filter_columns(
-            input,
-            importance_sample_.columns);
-
-    cauchy_matrix_ =
-        build_cauchy_matrix(
-            importance_sample_,
-            projection_dimension,
-            random_engine);
-
+    auto projection = detail::build_l1_hierarchical_projection(
+        input, std::move(importance_sample), projection_dimension,
+        random_engine);
+    importance_sample_ = std::move(projection.importance_sample);
+    initial_cols_ = projection.original_dimension;
+    cauchy_matrix_ = std::move(projection.cauchy_matrix);
     reduced_representatives_ =
-        DenseMatrix::multiply_right_transposed(
-            sampled_representatives,
-            cauchy_matrix_);
-
-    detail::validate_finite_result(
-        reduced_representatives_.values(),
-        "projected representatives");
+        std::move(projection.projected_representatives);
 }
 
 HierarchicalL1AnnIndex::QueryWorkspace
@@ -288,33 +199,12 @@ std::size_t HierarchicalL1AnnIndex::query(
         return 0;
     }
 
-    const std::size_t columns{
-        importance_sample_.columns.size()};
-    workspace.sampled_values_.resize(columns);
-
-    for (std::size_t index = 0;
-         index < columns;
-         ++index) {
-        const SampledColumn& column =
-            importance_sample_.columns[index];
-        const float value =
-            query[column.source_column];
-        detail::validate_finite_value(
-            value,
-            "sampled query coordinate");
-        workspace.sampled_values_[index] = value;
-    }
-
+    workspace.sampled_values_.resize(importance_sample_.columns.size());
     workspace.projected_query_.resize(
         cauchy_matrix_.rows());
-    project_sampled_query(
-        workspace.sampled_values_,
-        cauchy_matrix_,
-        workspace.projected_query_);
-    detail::validate_finite_result(
-        std::span<const double>{
-            workspace.projected_query_},
-        "projected query");
+    detail::project_l1_hierarchical_query(
+        query, initial_cols_, importance_sample_.columns, cauchy_matrix_,
+        workspace.sampled_values_, workspace.projected_query_);
 
     const std::span<const double> projected_query{
         workspace.projected_query_};

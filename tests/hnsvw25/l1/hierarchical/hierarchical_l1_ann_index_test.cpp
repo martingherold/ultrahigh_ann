@@ -1,5 +1,5 @@
-#include "hnsvw25/l1/hierarchical/hierarchical_l1_ann_index.hpp"
-#include "hnsvw25/l1/importance_sampling.hpp"
+#include "ultrahigh_ann/hnsvw25/l1/hierarchical/hierarchical_l1_ann_index.hpp"
+#include "ultrahigh_ann/hnsvw25/l1/importance_sampling.hpp"
 
 #include <array>
 #include <cstddef>

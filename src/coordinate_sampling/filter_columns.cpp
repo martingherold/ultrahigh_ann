@@ -1,5 +1,5 @@
 #include "coordinate_sampling/filter_columns.hpp"
-#include "core/dense_matrix.hpp"
+#include "ultrahigh_ann/core/dense_matrix.hpp"
 
 #include <stdexcept>
 #include <utility>

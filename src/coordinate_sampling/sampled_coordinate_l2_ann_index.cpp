@@ -1,13 +1,17 @@
-#include "coordinate_sampling/sampled_coordinate_l2_ann_index.hpp"
+#include "ultrahigh_ann/coordinate_sampling/sampled_coordinate_l2_ann_index.hpp"
 
-#include "core/finite_values.hpp"
-#include "coordinate_sampling/coordinate_sampling.hpp"
-#include "coordinate_sampling/filter_columns.hpp"
+#include "ultrahigh_ann/coordinate_sampling/coordinate_sampling.hpp"
+#include "coordinate_sampling/l2_coordinate_embedding.hpp"
+#include "ultrahigh_ann/core/dense_l2_scan_index.hpp"
 
 #include <cstddef>
+#include <limits>
+#include <memory>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace ultrahigh_ann {
 namespace {
@@ -22,35 +26,33 @@ namespace {
         throw std::invalid_argument(
             "sampling probability dimension does not match input");
     }
-    return build_coordinate_sample(
-        probabilities,
-        repetitions,
-        random_engine);
+    return build_coordinate_sample(probabilities, repetitions, random_engine);
 }
 
-[[nodiscard]] double weighted_squared_l2_distance(
-    std::span<const float> query,
-    std::span<const float> sampled_representative,
-    std::span<const SampledColumn> columns)
+[[nodiscard]] std::size_t checked_product(std::size_t left,
+                                          std::size_t right,
+                                          const char* description)
 {
-    if (sampled_representative.size() != columns.size()) {
-        throw std::logic_error("sample dimensions do not match");
+    if (right != 0 && left > std::numeric_limits<std::size_t>::max() / right) {
+        throw std::length_error(std::string(description) + " size overflows");
     }
-
-    double distance = 0.0;
-    for (std::size_t index = 0; index < columns.size(); ++index) {
-        const SampledColumn& column = columns[index];
-        const double difference =
-            static_cast<double>(query[column.source_column]) -
-            static_cast<double>(sampled_representative[index]);
-        distance +=
-            static_cast<double>(column.multiplicity) *
-            column.inverse_probability * difference * difference;
-    }
-    return distance;
+    return left * right;
 }
 
 }  // namespace
+
+struct SampledCoordinateL2AnnIndex::Impl {
+    Impl(const DenseMatrix& input, CoordinateSample coordinate_sample)
+        : embedding(detail::build_l2_coordinate_embedding(
+              input,
+              std::move(coordinate_sample))),
+          scan(embedding.transformed_representatives)
+    {
+    }
+
+    detail::L2CoordinateEmbedding embedding;
+    DenseL2ScanIndex scan;
+};
 
 SampledCoordinateL2AnnIndex::SampledCoordinateL2AnnIndex(
     const DenseMatrix& input,
@@ -59,79 +61,76 @@ SampledCoordinateL2AnnIndex::SampledCoordinateL2AnnIndex(
     std::mt19937_64& random_engine)
     : SampledCoordinateL2AnnIndex(
           input,
-          build_coordinate_sample_checked(
-              input,
-              probabilities,
-              repetitions,
-              random_engine))
+          build_coordinate_sample_checked(input,
+                                          probabilities,
+                                          repetitions,
+                                          random_engine))
 {
 }
 
 SampledCoordinateL2AnnIndex::SampledCoordinateL2AnnIndex(
     const DenseMatrix& input,
     CoordinateSample coordinate_sample)
-    : coordinate_sample_(std::move(coordinate_sample)),
-      sampled_representatives_(
-          filter_columns(input, coordinate_sample_.columns)),
-      initial_cols_(input.cols())
+    : implementation_(
+          std::make_unique<Impl>(input, std::move(coordinate_sample)))
 {
-    if (input.rows() == 0) {
-        throw std::invalid_argument(
-            "SampledCoordinateL2AnnIndex expects at least one representative");
-    }
 }
 
-std::size_t SampledCoordinateL2AnnIndex::query(
-    std::span<const float> query) const
-{
-    if (query.size() != initial_cols_) {
-        throw std::invalid_argument(
-            "query dimension does not match index dimension");
-    }
-    for (const SampledColumn& column : coordinate_sample_.columns) {
-        detail::validate_finite_value(
-            query[column.source_column],
-            "sampled query coordinate");
-    }
+SampledCoordinateL2AnnIndex::SampledCoordinateL2AnnIndex(
+    SampledCoordinateL2AnnIndex&&) noexcept = default;
 
-    const std::size_t rows = sampled_representatives_.rows();
-    if (rows == 1) {
-        return 0;
+SampledCoordinateL2AnnIndex& SampledCoordinateL2AnnIndex::operator=(
+    SampledCoordinateL2AnnIndex&&) noexcept = default;
+
+SampledCoordinateL2AnnIndex::~SampledCoordinateL2AnnIndex() = default;
+
+std::size_t SampledCoordinateL2AnnIndex::query(
+    std::span<const float> query,
+    CpuDenseL2QueryStrategy strategy) const
+{
+    std::vector<float> packed_query(
+        implementation_->embedding.source_columns.size());
+    detail::pack_l2_coordinate_queries(
+        query, 1, implementation_->embedding.original_dimension,
+        implementation_->embedding.source_columns,
+        implementation_->embedding.scales, packed_query);
+    return implementation_->scan.query(packed_query, strategy);
+}
+
+void SampledCoordinateL2AnnIndex::query_batch(
+    std::span<const float> queries,
+    std::size_t query_count,
+    std::span<std::size_t> output,
+    CpuDenseL2QueryStrategy strategy) const
+{
+    if (output.size() != query_count) {
+        throw std::invalid_argument(
+            "sampled L2 output size does not match query count");
     }
-    const std::span<const SampledColumn> columns{
-        coordinate_sample_.columns};
-    std::size_t result = 0;
-    double minimum_distance = weighted_squared_l2_distance(
-        query,
-        sampled_representatives_.row(0),
-        columns);
-    for (std::size_t row = 1; row < rows; ++row) {
-        const double distance = weighted_squared_l2_distance(
-            query,
-            sampled_representatives_.row(row),
-            columns);
-        if (distance < minimum_distance) {
-            minimum_distance = distance;
-            result = row;
-        }
-    }
-    return result;
+    const std::size_t packed_value_count = checked_product(
+        query_count, implementation_->embedding.source_columns.size(),
+        "sampled L2 packed query batch");
+    std::vector<float> packed_queries(packed_value_count);
+    detail::pack_l2_coordinate_queries(
+        queries, query_count, implementation_->embedding.original_dimension,
+        implementation_->embedding.source_columns,
+        implementation_->embedding.scales, packed_queries);
+    implementation_->scan.query_batch(packed_queries, query_count, output,
+                                      strategy);
 }
 
 IndexSpaceUsage SampledCoordinateL2AnnIndex::space_usage() const noexcept
 {
-    std::size_t sampled_multiplicity = 0;
-    for (const SampledColumn& column : coordinate_sample_.columns) {
-        sampled_multiplicity += column.multiplicity;
-    }
-    return IndexSpaceUsage{
-        .index_payload_bytes =
-            coordinate_sample_.columns.size() * sizeof(SampledColumn) +
-            sampled_representatives_.values().size_bytes(),
-        .query_workspace_payload_bytes = 0,
-        .unique_query_coordinates = coordinate_sample_.columns.size(),
-        .sampled_multiplicity = sampled_multiplicity,
-    };
+    IndexSpaceUsage usage = implementation_->scan.space_usage();
+    usage.index_payload_bytes +=
+        detail::l2_embedding_metadata_bytes(implementation_->embedding);
+    usage.query_workspace_payload_bytes =
+        implementation_->embedding.source_columns.size() * sizeof(float);
+    usage.unique_query_coordinates =
+        implementation_->embedding.source_columns.size();
+    usage.sampled_multiplicity =
+        implementation_->embedding.sampled_multiplicity;
+    return usage;
 }
 
 }  // namespace ultrahigh_ann
