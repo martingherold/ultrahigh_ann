@@ -37,13 +37,67 @@ jobs:
         run: >
           cmake -S . -B build
           -DCMAKE_BUILD_TYPE=Release
-          -DBUILD_TESTING=ON
+          -DULTRAHIGH_ANN_BUILD_TESTS=ON
 
       - name: Build
         run: cmake --build build --parallel
 
       - name: Test
         run: ctest --test-dir build --output-on-failure
+
+  cuda:
+    name: CUDA 13.3 compile/link (no GPU)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    env:
+      CC: gcc-13
+      CXX: g++-13
+      CUDACXX: /usr/local/cuda-13.3/bin/nvcc
+      LD_LIBRARY_PATH: /usr/local/cuda-13.3/targets/x86_64-linux/lib
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install CUDA build dependencies
+        run: |
+          curl -fsSLo /tmp/cuda-keyring.deb \
+            https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i /tmp/cuda-keyring.deb
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            cuda-compiler-13-3 \
+            cuda-cudart-dev-13-3 \
+            libcublas-dev-13-3
+
+      - name: Record compiler versions
+        run: |
+          cmake --version
+          g++-13 --version
+          "$CUDACXX" --version
+
+      - name: Configure CUDA build
+        run: >
+          cmake -S . -B build-cuda -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DULTRAHIGH_ANN_BUILD_TESTS=ON
+          -DULTRAHIGH_ANN_ENABLE_CUDA=ON
+          -DCMAKE_CUDA_ARCHITECTURES=75
+          -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/g++-13
+
+      - name: Build CUDA sources
+        run: cmake --build build-cuda --parallel 4
+
+      - name: Run CPU-compatible tests and report device tests skipped
+        run: ctest --test-dir build-cuda --output-on-failure
+
+      - name: Validate public CUDA setups
+        run: |
+          for setup in experiments/tcga_pancancer/cuda/*.tsv; do
+            ./build-cuda/nearest_representative_benchmark \
+              --setup "$setup" --validate-only
+          done
 
   python:
     name: Python tests

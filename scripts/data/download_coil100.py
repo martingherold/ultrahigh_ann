@@ -120,7 +120,7 @@ def download_once(
     destination: Path,
     timeout: float = 60.0,
 ) -> dict[str, object]:
-    request = Request(url, headers={"User-Agent": "ultrahigh-ann/0.1"})
+    request = Request(url, headers={"User-Agent": "ultrahigh-ann/0.2"})
     with urlopen(request, timeout=timeout) as response:
         length_header = response.headers.get("Content-Length")
         expected_bytes = int(length_header) if length_header else None

@@ -113,7 +113,7 @@ def copy_with_progress(
 
 
 def download(url: str, destination: Path) -> dict[str, object]:
-    request = Request(url, headers={"User-Agent": "ultrahigh-ann/0.1"})
+    request = Request(url, headers={"User-Agent": "ultrahigh-ann/0.2"})
 
     try:
         with urlopen(request, timeout=60) as response:

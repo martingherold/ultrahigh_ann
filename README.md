@@ -1,4 +1,6 @@
-# Ultra-High-Dimensional Nearest-Representative Search
+# Ultra-High-Dimensional Nearest-Neighbor Search
+
+[![CI](https://github.com/martingherold/ultrahigh_ann/actions/workflows/ci.yml/badge.svg)](https://github.com/martingherold/ultrahigh_ann/actions/workflows/ci.yml)
 
 This repository studies when a query can be assigned to one of a small number
 of representatives while acquiring only a small fraction of its coordinates.

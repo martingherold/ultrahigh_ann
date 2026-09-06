@@ -2,9 +2,10 @@ cff-version: 1.2.0
 message: >-
   If you use this software, please cite the associated SoCG 2025 paper using
   the metadata in preferred-citation.
-title: "Ultra-High-Dimensional Nearest-Representative Search"
+title: "Ultra-High-Dimensional Nearest-Neighbor Search"
 type: software
-version: "0.1.0"
+version: "0.2.0"
+repository-code: "https://github.com/martingherold/ultrahigh_ann"
 authors:
   - family-names: Herold
     given-names: "Martin G."
