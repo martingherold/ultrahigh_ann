@@ -76,7 +76,7 @@ class RunBenchmarkSweepHierarchicalTest(unittest.TestCase):
             summary = json.loads(
                 (root / "hierarchy_summary.json").read_text(encoding="utf-8")
             )
-            self.assertEqual(summary["source_report"], str(report))
+            self.assertEqual(summary["source_report"], str(report.resolve()))
             self.assertEqual(
                 summary["sampling_probabilities"]["build_ms"],
                 12.5,

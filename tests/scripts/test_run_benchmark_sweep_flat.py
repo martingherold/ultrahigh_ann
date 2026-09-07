@@ -70,7 +70,7 @@ class RunBenchmarkSweepFlatTest(unittest.TestCase):
             summary = json.loads(
                 (root / "batch_summary.json").read_text(encoding="utf-8")
             )
-            self.assertEqual(summary["source_report"], str(report))
+            self.assertEqual(summary["source_report"], str(report.resolve()))
             self.assertEqual(len(summary["runs"]), 4)
             self.assertEqual(len(summary["aggregates"]), 2)
             self.assertEqual(summary["runs"][0]["mean_distance_ratio"], 1.01)
